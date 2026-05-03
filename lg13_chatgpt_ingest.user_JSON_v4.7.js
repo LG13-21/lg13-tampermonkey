@@ -74,8 +74,11 @@
   // Short keys: th=thread, tp=topic, tg=tags, rf=refs, ab=atom_break, fu=followup, ts=ts.
   // DELTA mode trailers may include only a subset; missing keys are fine downstream.
   const LG13_KEY_ALIAS = {
-    th: 'thread', tp: 'topic', tg: 'tags',
-    rf: 'refs',   ab: 'atom_break', fu: 'followup'
+    th: 'thread',     tp: 'topic',        tg: 'tags',
+    rf: 'refs',       ab: 'atom_break',   fu: 'followup',
+    // protocol v2 extension (legal/emotional layering):
+    ly: 'layer',      li: 'legal_intent', ah: 'atom_hint',
+    st: 'story_id',   rk: 'risk'
   };
 
   function extractLg13Meta(rawText) {
@@ -93,6 +96,8 @@
       if (v === '') return;
       // booleans
       if (v === 'true' || v === 'false') { meta[realKey] = (v === 'true'); return; }
+      // integers (ah/rk are 0|1|2)
+      if (/^-?\d+$/.test(v)) { meta[realKey] = parseInt(v, 10); return; }
       // arrays: try strict JSON first, then lenient (unquoted hashtags etc.)
       if (v.startsWith('[')) {
         try { meta[realKey] = JSON.parse(v); return; }
