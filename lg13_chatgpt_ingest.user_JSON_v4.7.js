@@ -119,12 +119,17 @@
 
   function stripLg13Trailer(text) {
     if (!text) return text;
-    // remove HTML-comment-wrapped trailer (with optional preceding --- separator)
+    // 1. fenced code block wrap (```...```) — protocol v2 default
     let t = text.replace(
+      /(?:\n?---\s*\n)?```[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?```\s*$/,
+      ''
+    );
+    // 2. HTML comment wrap (voice/TTS skip)
+    t = t.replace(
       /(?:\n?---\s*\n)?<!--\s*[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?-->\s*$/,
       ''
     );
-    // remove bare trailer (no comment wrap)
+    // 3. bare trailer (no wrap)
     t = t.replace(
       /(?:\n?---\s*\n)?<<LG13_META>>[\s\S]*?<<\/LG13_META>>\s*$/,
       ''
