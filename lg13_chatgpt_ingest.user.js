@@ -119,11 +119,9 @@
 
   function stripLg13Trailer(text) {
     if (!text) return text;
-    // 1. fenced code block wrap (
-...) — protocol v2 default
+    // 1. fenced code block wrap (```...```) — protocol v2 default
     let t = text.replace(
-      /(?:\n?---\s*\n)?
-[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?\s*$/,
+      /(?:\n?---\s*\n)?```[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?```\s*$/,
       ''
     );
     // 2. HTML comment wrap (voice/TTS skip)
