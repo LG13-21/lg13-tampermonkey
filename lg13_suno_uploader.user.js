@@ -10,6 +10,8 @@
 // @grant        GM_getValue
 // @connect      127.0.0.1
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_suno_uploader.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_suno_uploader.user.js
 // ==/UserScript==
 
 (function() {

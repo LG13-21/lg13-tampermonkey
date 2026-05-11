@@ -7,6 +7,8 @@
 // @match        https://chat.openai.com/*
 // @grant        none
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_full_loader.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_full_loader.user.js
 // ==/UserScript==
 
 // USE CASE:
