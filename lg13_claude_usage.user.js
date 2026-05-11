@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.6
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.6: robust sibling-walk extraction; aria-label + data-testid fallbacks; POST path matches popup path]
+// @version      2.7
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.7: aria-valuenow primary + forward-sibling-walk from h3 label (fixes querySelector-returns-first-bar bug); handles label-with-subtitle pattern]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -79,33 +79,35 @@
   };
 
   // Given a label span, find the associated progressbar value.
-  // Strategy A: walk up ancestor chain, at each level try querySelector for progressbar.
-  // Strategy B: if ancestor has sibling divs, search those siblings (label col + bar col pattern).
-  // Strategy C: aria-label on progressbar matching the key label text.
-  // This ensures the POST path uses the exact same extraction as the popup display.
+  // KEY INSIGHT (v2.7): label and bar live in adjacent column containers.
+  // Walking ancestors with querySelector returns the FIRST progressbar in subtree
+  // — wrong for non-first sections (Sonnet/Opus/Design under Weekly limits row).
+  // Fix: forward-sibling walk from label, prefer aria-valuenow attribute.
   function pctFromLabelSpan(span) {
-    // Strategy A: walk up ancestor chain (original approach, works when bar is in same subtree)
-    let node = span.parentElement;
-    for (let i = 0; i < 8 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN'; i++) {
-      const bar = node.querySelector('[role="progressbar"]');
+    // Strategy A: forward siblings of the label span itself
+    let sib = span.nextElementSibling;
+    while (sib) {
+      const bar = sib.matches && sib.matches('[role="progressbar"]') ? sib : (sib.querySelector && sib.querySelector('[role="progressbar"]'));
       if (bar) return parsePctFromAny(bar);
+      sib = sib.nextElementSibling;
+    }
+    // Strategy B: walk up; at each level inspect following siblings of current node
+    let node = span.parentElement;
+    for (let i = 0; i < 6 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN' && node !== document.body; i++) {
+      let s = node.nextElementSibling;
+      while (s) {
+        const bar = s.matches && s.matches('[role="progressbar"]') ? s : (s.querySelector && s.querySelector('[role="progressbar"]'));
+        if (bar) return parsePctFromAny(bar);
+        s = s.nextElementSibling;
+      }
       node = node.parentElement;
     }
-    // Strategy B: sibling column walk — label col and bar col are flex siblings.
-    // Walk up to a flex-row container, then search each sibling subtree.
+    // Strategy C (last resort): closest container that has EXACTLY one progressbar (scoped)
     node = span.parentElement;
-    for (let i = 0; i < 8 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN'; i++) {
-      const parent = node.parentElement;
-      if (!parent) break;
-      const siblings = Array.from(parent.children);
-      if (siblings.length >= 2) {
-        for (const sib of siblings) {
-          if (sib === node) continue;
-          const bar = sib.querySelector('[role="progressbar"]');
-          if (bar) return parsePctFromAny(bar);
-        }
-      }
-      node = parent;
+    for (let i = 0; i < 8 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN' && node !== document.body; i++) {
+      const bars = node.querySelectorAll('[role="progressbar"]');
+      if (bars.length === 1) return parsePctFromAny(bars[0]);
+      node = node.parentElement;
     }
     return null;
   }
@@ -125,18 +127,26 @@
     };
 
     // --- Primary: label-first scan ---
-    // Find all text-bearing spans/divs and match their text against LABEL_MAP.
-    // This is robust: label and progressbar are siblings inside a flex-row,
-    // so bar-first .closest() misses the label. Label-first walk finds the bar.
-    const candidates = Array.from(document.querySelectorAll('span, div, h3, h4, p'));
+    // Find text-bearing elements and match against LABEL_MAP.
+    // v2.7: allow startsWith() match (label may have "\nResets..." subtitle in textContent),
+    // and use forward-sibling walk in pctFromLabelSpan (not ancestor querySelector).
+    const labelKeys = Object.keys(LABEL_MAP);
+    const candidates = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, span, p, div'));
     candidates.forEach(el => {
-      // Only leaf-ish text nodes to avoid huge textContent from containers
-      if (el.children.length > 3) return;
+      // Only leaf-ish nodes to avoid huge container textContent
+      if (el.children.length > 2) return;
       const txt = (el.textContent || '').trim().toLowerCase();
-      const key = LABEL_MAP[txt];
-      if (!key || result[key] != null) return;
+      if (!txt) return;
+      // Try exact match first, then startsWith (handles "current session\nresets in...")
+      let matchedKey = LABEL_MAP[txt];
+      if (!matchedKey) {
+        for (const k of labelKeys) {
+          if (txt.startsWith(k)) { matchedKey = LABEL_MAP[k]; break; }
+        }
+      }
+      if (!matchedKey || result[matchedKey] != null) return;
       const pct = pctFromLabelSpan(el);
-      if (pct != null) result[key] = pct;
+      if (pct != null) result[matchedKey] = pct;
     });
 
     // --- Fallback: progressbar scan (catches any missed bars) ---
