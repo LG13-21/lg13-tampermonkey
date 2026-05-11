@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.3
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.3: github raw (repo public)]
+// @version      2.4
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.4: fix label-first selector (label+progressbar are siblings, not nested)]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_claude_usage.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_claude_usage.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_claude_usage.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_claude_usage.user.js
 // ==/UserScript==
 
 (function () {
@@ -68,6 +68,40 @@
 
   // ---- parser ----------------------------------------------------------------
 
+  // Map of exact label text (as it appears on page) → result key
+  const LABEL_MAP = {
+    'current session': 'session_pct',
+    'all models':      'weekly_all',
+    'sonnet only':     'weekly_sonnet',
+    'opus only':       'weekly_opus',
+    'claude design':   'weekly_design',
+    'design':          'weekly_design',
+  };
+
+  // Given a label span, walk up to the row container (flex-row wrapper),
+  // then find the [role="progressbar"] inside that row.
+  function pctFromLabelSpan(span) {
+    // The DOM structure:
+    //   <div class="flex w-full flex-row ...">       ← row container
+    //     <div class="flex w-[13rem] ...">           ← label column
+    //       <div class="flex items-center ...">
+    //         <span class="text-body text-primary">Label text</span>
+    //       </div>
+    //       <span>Resets in ...</span>
+    //     </div>
+    //     <div class="flex flex-1 ...">              ← bar column
+    //       <div ...>
+    //         <div role="progressbar" aria-valuenow="N" ...>
+    // Walk up 4 levels max to find the row (stops at section boundary).
+    let row = span.parentElement;
+    for (let i = 0; i < 6 && row && row.tagName !== 'SECTION'; i++) {
+      const bar = row.querySelector('[role="progressbar"]');
+      if (bar) return parsePctFromAny(bar);
+      row = row.parentElement;
+    }
+    return null;
+  }
+
   function parseUsagePage() {
     const result = {
       session_pct: null,
@@ -82,9 +116,23 @@
       url: location.href,
     };
 
-    const bars = Array.from(document.querySelectorAll(
-      '[role="progressbar"], [class*="progress"], [class*="Progress"], [class*="bar"]'
-    ));
+    // --- Primary: label-first scan ---
+    // Find all text-bearing spans/divs and match their text against LABEL_MAP.
+    // This is robust: label and progressbar are siblings inside a flex-row,
+    // so bar-first .closest() misses the label. Label-first walk finds the bar.
+    const candidates = Array.from(document.querySelectorAll('span, div, h3, h4, p'));
+    candidates.forEach(el => {
+      // Only leaf-ish text nodes to avoid huge textContent from containers
+      if (el.children.length > 3) return;
+      const txt = (el.textContent || '').trim().toLowerCase();
+      const key = LABEL_MAP[txt];
+      if (!key || result[key] != null) return;
+      const pct = pctFromLabelSpan(el);
+      if (pct != null) result[key] = pct;
+    });
+
+    // --- Fallback: progressbar scan (catches any missed bars) ---
+    const bars = Array.from(document.querySelectorAll('[role="progressbar"]'));
     bars.forEach(bar => {
       const pct = parsePctFromAny(bar);
       if (pct == null) return;
@@ -92,9 +140,9 @@
       if (key && result[key] == null) result[key] = pct;
     });
 
-    // Fallback: scan sections for "X%" + nearby keywords
-    if (result.session_pct == null && result.weekly_all == null) {
-      const sections = document.querySelectorAll('section, [class*="usage"], [class*="quota"], [class*="card"], li');
+    // --- Last-resort: text scan for "X% used" near keyword ---
+    if (result.session_pct == null || result.weekly_all == null) {
+      const sections = document.querySelectorAll('section, [class*="usage"], [class*="quota"], li');
       sections.forEach(sec => {
         const txt = (sec.textContent || '');
         const m = txt.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
