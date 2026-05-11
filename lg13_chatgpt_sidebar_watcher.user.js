@@ -1,14 +1,20 @@
 // ==UserScript==
 // @name         ChatGPT Sidebar Watcher
 // @namespace    local.chatgpt
-// @version      1.1
-// @description  Watch sidebar for keywords, open matching threads — patched seen->localStorage (anti-reopen)
+// @version      1.2
+// @description  Watch sidebar for keywords (regex + literal), open matching threads — localStorage seen + F-cycle regex
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_notification
 // @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_sidebar_watcher.user.js
 // @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_sidebar_watcher.user.js
 // ==/UserScript==
+
+// PATCH v1.2 (coder, 2026-05-11):
+//   Keywords match F-cycle regex (F\d+) místo hard-coded 'F15'.
+//   Tom je teď na F16+, takže F15 už nic neotvíralo. Regex chytá F1..F99
+//   automaticky — nikdy nepoužitelný refresh když přijde F17/F18 atd.
+//   Plus: keywords mohou být objekty {re: '...'} pro custom regex.
 
 // PATCH v1.1 (coder, 2026-05-09):
 //   `seen` Set -> localStorage-backed — survives page reloads (Adaptive Reload
@@ -22,11 +28,16 @@
 const CHECK_INTERVAL = 5000;
 const SEEN_KEY = 'lg13_sidebar_watcher_seen_v1';
 
+// Můžeš mít:
+//   string  -> case-insensitive substring match
+//   {re:'..'} -> regex match (full RegExp source string)
 const WATCH_KEYWORDS = [
-    'F15',
+    { re: '\\bF\\d+(\\.\\d+)?\\b' },   // F-cycle: F15, F16, F16.1, F17 ...
     'freeze',
     'OSPOD',
-    'review'
+    'review',
+    'KONEC STOP',                       // STOP ORDER cancel signal
+    'Matoušek',                         // Matous case
 ];
 
 function loadSeen() {
@@ -56,9 +67,19 @@ function getThreads() {
 
 function shouldWatch(title) {
     const lower = title.toLowerCase();
-    return WATCH_KEYWORDS.some(
-        k => lower.includes(k.toLowerCase())
-    );
+    return WATCH_KEYWORDS.some(k => {
+        if (typeof k === 'string') {
+            return lower.includes(k.toLowerCase());
+        }
+        if (k && k.re) {
+            try {
+                return new RegExp(k.re, 'i').test(title);
+            } catch (_) {
+                return false;
+            }
+        }
+        return false;
+    });
 }
 
 function openThread(thread) {
@@ -90,7 +111,7 @@ function scan() {
     });
 }
 
-console.log('[Watcher v1.1] started — seen=' + seen.size + ' (localStorage)');
+console.log('[Watcher v1.2] started — seen=' + seen.size + ' (localStorage), keywords=' + WATCH_KEYWORDS.length);
 setInterval(scan, CHECK_INTERVAL);
 
 })();
