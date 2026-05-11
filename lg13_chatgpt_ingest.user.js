@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.8
-// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message [v4.8: + @updateURL]
+// @version      4.9
+// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message [v4.9: btn moved above LOAD ALL]
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -413,7 +413,7 @@
     const style = document.createElement('style');
     style.textContent = [
       ':host { all: initial; }',
-      '#btn { position: fixed; bottom: 60px; right: 16px; z-index: 2147483647;',
+      '#btn { position: fixed; bottom: 160px; right: 16px; z-index: 2147483647;',
       '       background: #07101e; border: 1px solid #1e3358; color: #4b8ef5;',
       '       padding: 5px 10px; border-radius: 6px; font-size: 11px;',
       '       cursor: pointer; font-family: monospace; font-weight: 600;',
