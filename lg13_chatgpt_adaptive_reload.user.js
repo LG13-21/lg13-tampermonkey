@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Adaptive Reload
 // @namespace    local.chatgpt
-// @version      1.4
-// @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.4: github raw (repo public)]
+// @version      1.5
+// @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.5: isTyping only when composer has content]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
@@ -10,32 +10,30 @@
 // @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
 // ==/UserScript==
 
+// PATCH v1.5 (coder, 2026-05-11):
+//   isTyping() teď vrací true POUZE pokud composer obsahuje text. ChatGPT
+//   defaultně dává focus na input box (i prázdný) → v1.4 isTyping = true →
+//   reload se navždy přeskakoval. Tom nahlásil "nedela refresh". Fix: empty
+//   input box ≠ typing. Plus přidán FORCE_RELOAD_AFTER safety net (45 min)
+//   pro případ že tick někde zatuhne.
+
 // PATCH v1.2 (coder, 2026-05-11):
-//   3 fixes proti v1.1:
-//   1. ACTIVITY branch NEREloaduje — page už ukazuje nové zprávy z DOM update,
-//      zbytečný reload (a window listenery se ztratí + state reset).
-//   2. HARD_STOP_AFTER odstraněno — script umíral po pár hodinách idle,
-//      Tom přišel po obědě a stránka byla zaseknutá. Místo toho clamp na MAX.
-//   3. MIN_INTERVAL 30min -> 5min — 30min byl moc velký anti-spam overshoot,
-//      Tom dostává zprávy častěji než 30min. Server-side dedup v pl_classifier
-//      už drží DDOS pod kontrolou (ingest v4.7 atom dedup).
-//   Plus defensive: scheduleNext() volaný i v idle větvi pro robustnost.
+//   3 fixes: ACTIVITY no-reload, no HARD_STOP, MIN 5min.
 
 // PATCH v1.1 (coder, 2026-05-09):
-//   MIN_INTERVAL 2*60_000 -> 30*60_000 — combined with LG13 v4.7 ingest
-//   2-min reload caused N matching tabs x 30 reloads/h x M atoms = exponential
-//   spam (chained with Sidebar Watcher). 30-min floor prevents self-DDOS even
-//   without server-side pl_classifier dedup.
+//   localStorage seen + 30min floor (pre-classifier dedup).
 
 (function () {
 'use strict';
 
-const MIN_INTERVAL = 5 * 60 * 1000;      // PATCHED v1.2: 30 min -> 5 min
-const MAX_INTERVAL = 60 * 60 * 1000;     // 1 h
-const STEP = 60 * 1000;                  // +1 min per idle tick
+const MIN_INTERVAL       = 5 * 60 * 1000;     // 5 min
+const MAX_INTERVAL       = 60 * 60 * 1000;    // 1 h
+const STEP               = 60 * 1000;         // +1 min per idle tick
+const FORCE_RELOAD_AFTER = 45 * 60 * 1000;    // hard safety: reload po 45 min bez ohledu
 
 let currentInterval = MIN_INTERVAL;
 let lastMessageCount = 0;
+let pageLoadedAt = Date.now();
 
 function getMessageCount() {
     return document.querySelectorAll('[data-message-author-role]').length;
@@ -47,45 +45,52 @@ function isGenerating() {
 
 function isTyping() {
     const el = document.activeElement;
-    return el &&
-           (el.tagName === 'TEXTAREA' ||
-            el.tagName === 'INPUT' ||
-            el.isContentEditable);
+    if (!el) return false;
+    const isInput = (el.tagName === 'TEXTAREA' ||
+                     el.tagName === 'INPUT' ||
+                     el.isContentEditable);
+    if (!isInput) return false;
+    // Empty composer != typing. ChatGPT default-focuses the composer even
+    // when Tom isn't writing; without this we'd never reload.
+    const val = (el.value !== undefined)
+        ? el.value
+        : (el.innerText || el.textContent || '');
+    return val.trim().length > 0;
 }
 
 function tick() {
+    const sinceLoad = Date.now() - pageLoadedAt;
 
     if (isGenerating()) {
-        console.log('[AdaptiveReload] generating, skip');
+        console.log('[AdaptiveReload] generating, skip (age ' + Math.round(sinceLoad/1000) + 's)');
         scheduleNext();
         return;
     }
 
     if (isTyping()) {
-        console.log('[AdaptiveReload] typing, skip');
+        console.log('[AdaptiveReload] composer has draft, skip (age ' + Math.round(sinceLoad/1000) + 's)');
         scheduleNext();
         return;
     }
 
-    const count = getMessageCount();
+    // Hard safety net: po 45 min od load reload bez ohledu na count delta.
+    if (sinceLoad >= FORCE_RELOAD_AFTER) {
+        console.log('[AdaptiveReload] FORCE reload — page age ' + Math.round(sinceLoad/60000) + 'min');
+        location.reload();
+        return;
+    }
 
+    const count = getMessageCount();
     if (count > lastMessageCount) {
-        // ACTIVITY: page already shows new messages via DOM update.
-        // Reload would just reset state. Reset interval and wait.
-        console.log('[AdaptiveReload] activity detected (' + lastMessageCount + ' -> ' + count + '), no reload');
+        console.log('[AdaptiveReload] activity (' + lastMessageCount + ' -> ' + count + '), no reload');
         lastMessageCount = count;
         currentInterval = MIN_INTERVAL;
         scheduleNext();
         return;
     }
 
-    // IDLE: bump interval (clamped at MAX), then reload.
     currentInterval = Math.min(currentInterval + STEP, MAX_INTERVAL);
-    console.log(
-        '[AdaptiveReload] idle reload, next interval:',
-        currentInterval / 1000,
-        'sec'
-    );
+    console.log('[AdaptiveReload] idle reload (age ' + Math.round(sinceLoad/1000) + 's, next ' + currentInterval/1000 + 's)');
     location.reload();
 }
 
@@ -94,9 +99,7 @@ function scheduleNext() {
 }
 
 lastMessageCount = getMessageCount();
-
-console.log('[AdaptiveReload v1.2] started — MIN_INTERVAL=5min, no hard-stop, baseline count=' + lastMessageCount);
-
+console.log('[AdaptiveReload v1.5] started — MIN=5min, MAX=60min, FORCE=45min, baseline=' + lastMessageCount);
 scheduleNext();
 
 })();
