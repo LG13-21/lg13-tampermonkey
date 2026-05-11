@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.4
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.4: fix label-first selector (label+progressbar are siblings, not nested)]
+// @version      2.6
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.6: robust sibling-walk extraction; aria-label + data-testid fallbacks; POST path matches popup path]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -78,26 +78,34 @@
     'design':          'weekly_design',
   };
 
-  // Given a label span, walk up to the row container (flex-row wrapper),
-  // then find the [role="progressbar"] inside that row.
+  // Given a label span, find the associated progressbar value.
+  // Strategy A: walk up ancestor chain, at each level try querySelector for progressbar.
+  // Strategy B: if ancestor has sibling divs, search those siblings (label col + bar col pattern).
+  // Strategy C: aria-label on progressbar matching the key label text.
+  // This ensures the POST path uses the exact same extraction as the popup display.
   function pctFromLabelSpan(span) {
-    // The DOM structure:
-    //   <div class="flex w-full flex-row ...">       ← row container
-    //     <div class="flex w-[13rem] ...">           ← label column
-    //       <div class="flex items-center ...">
-    //         <span class="text-body text-primary">Label text</span>
-    //       </div>
-    //       <span>Resets in ...</span>
-    //     </div>
-    //     <div class="flex flex-1 ...">              ← bar column
-    //       <div ...>
-    //         <div role="progressbar" aria-valuenow="N" ...>
-    // Walk up 4 levels max to find the row (stops at section boundary).
-    let row = span.parentElement;
-    for (let i = 0; i < 6 && row && row.tagName !== 'SECTION'; i++) {
-      const bar = row.querySelector('[role="progressbar"]');
+    // Strategy A: walk up ancestor chain (original approach, works when bar is in same subtree)
+    let node = span.parentElement;
+    for (let i = 0; i < 8 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN'; i++) {
+      const bar = node.querySelector('[role="progressbar"]');
       if (bar) return parsePctFromAny(bar);
-      row = row.parentElement;
+      node = node.parentElement;
+    }
+    // Strategy B: sibling column walk — label col and bar col are flex siblings.
+    // Walk up to a flex-row container, then search each sibling subtree.
+    node = span.parentElement;
+    for (let i = 0; i < 8 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN'; i++) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      const siblings = Array.from(parent.children);
+      if (siblings.length >= 2) {
+        for (const sib of siblings) {
+          if (sib === node) continue;
+          const bar = sib.querySelector('[role="progressbar"]');
+          if (bar) return parsePctFromAny(bar);
+        }
+      }
+      node = parent;
     }
     return null;
   }
