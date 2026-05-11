@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         LG13 ChatGPT Full Conv Loader
 // @namespace    lg13.local
-// @version      1.2
-// @description  Manual button — scroll to top, then slow PgDn-style scroll down to force-load entire long conv into DOM (so LG13 ingest sees all messages) [v1.2: pl_server proxy]
+// @version      1.3
+// @description  Manual button — scroll to top, then slow PgDn-style scroll down to force-load entire long conv into DOM (so LG13 ingest sees all messages) [v1.3: github raw (repo public)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
 // @run-at       document-idle
-// @updateURL    http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_full_loader.user.js
-// @downloadURL  http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_full_loader.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_full_loader.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_full_loader.user.js
 // ==/UserScript==
 
 // USE CASE:

@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.2
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.2: pl_server proxy]
+// @version      2.3
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.3: github raw (repo public)]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
-// @updateURL    http://127.0.0.1:8790/pl/tmonkey/lg13_claude_usage.user.js
-// @downloadURL  http://127.0.0.1:8790/pl/tmonkey/lg13_claude_usage.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_claude_usage.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_claude_usage.user.js
 // ==/UserScript==
 
 (function () {

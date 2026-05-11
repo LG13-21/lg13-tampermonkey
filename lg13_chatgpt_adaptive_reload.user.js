@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         ChatGPT Adaptive Reload
 // @namespace    local.chatgpt
-// @version      1.3
-// @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.3: pl_server proxy]
+// @version      1.4
+// @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.4: github raw (repo public)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
-// @updateURL    http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_adaptive_reload.user.js
-// @downloadURL  http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_adaptive_reload.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
 // ==/UserScript==
 
 // PATCH v1.2 (coder, 2026-05-11):
