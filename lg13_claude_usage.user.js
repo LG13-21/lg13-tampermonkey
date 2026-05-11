@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.0
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687)
+// @version      2.1
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.1: + @updateURL]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Suno → LG13 Lyrics Uploader & Downloader
 // @namespace    lg13.local
-// @version      2.5
-// @description  Server-driven: applies edited lyrics from LG13 to Suno songs and triggers downloads.
+// @version      2.6
+// @description  Server-driven: applies edited lyrics from LG13 to Suno songs and triggers downloads. [v2.6: + @updateURL]
 // @author       Tom / LG13
 // @match        https://suno.com/*
 // @grant        GM_xmlhttpRequest

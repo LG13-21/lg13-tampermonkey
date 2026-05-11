@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 ChatGPT Full Conv Loader
 // @namespace    lg13.local
-// @version      1.0
-// @description  Manual button — scroll to top, then slow PgDn-style scroll down to force-load entire long conv into DOM (so LG13 ingest sees all messages)
+// @version      1.1
+// @description  Manual button — scroll to top, then slow PgDn-style scroll down to force-load entire long conv into DOM (so LG13 ingest sees all messages) [v1.1: + @updateURL]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none

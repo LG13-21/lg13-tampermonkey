@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Suno → LG13 Catalog
 // @namespace    lg13.local
-// @version      6.5
-// @description  Captures Suno playlist + auto-fetches full details (lyrics, tags, plays, likes) by visiting each /song/ page in background.
+// @version      6.6
+// @description  Captures Suno playlist + auto-fetches full details (lyrics, tags, plays, likes) by visiting each /song/ page in background. [v6.6: + @updateURL]
 // @author       Tom / LG13
 // @match        https://suno.com/*
 // @grant        GM_xmlhttpRequest

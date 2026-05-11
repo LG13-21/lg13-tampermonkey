@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.1
-// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1)
+// @version      1.2
+// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.2: + @updateURL]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
