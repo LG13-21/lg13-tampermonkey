@@ -1,12 +1,14 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      1.0
-// @description  Auto-parse Claude usage progress bars + POST to localhost:8790/pl/usage/ingest (#2687)
+// @version      2.4
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.4: fix label-first selector (label+progressbar are siblings, not nested)]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_claude_usage.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_claude_usage.user.js
 // ==/UserScript==
 
 (function () {
@@ -16,27 +18,46 @@
   window.__LG13_USAGE__ = true;
 
   const INGEST = 'http://127.0.0.1:8790/pl/usage/ingest';
-  const POLL_MS = 5 * 60 * 1000; // 5 min
+  const POLL_MS = 5 * 60 * 1000;
+  const LS_LAST = 'lg13_usage_last';
   const log = (...a) => console.log('[LG13-USAGE]', ...a);
 
   let lastPayloadHash = null;
 
   // ---- helpers ---------------------------------------------------------------
 
-  function parsePct(el) {
-    if (!el) return null;
-    const style = el.style.width || el.getAttribute('aria-valuenow') || '';
-    const m = style.match(/([\d.]+)/);
+  function parsePctFromAny(node) {
+    if (!node) return null;
+    if (node.getAttribute) {
+      const aria = node.getAttribute('aria-valuenow');
+      if (aria != null && aria !== '') {
+        const v = parseFloat(aria);
+        if (!Number.isNaN(v)) return v;
+      }
+    }
+    const inner = node.querySelector && node.querySelector('[style*="width"]');
+    const styleStr = (inner && inner.style && inner.style.width) || (node.style && node.style.width) || '';
+    let m = styleStr.match(/([\d.]+)\s*%/);
     if (m) return parseFloat(m[1]);
-    const txt = el.textContent || '';
-    const m2 = txt.match(/([\d.]+)%/);
-    if (m2) return parseFloat(m2[1]);
+    const txt = (node.textContent || '').trim();
+    m = txt.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+    if (m) return parseFloat(m[1]);
     return null;
   }
 
-  function parseTimeStr(txt) {
-    if (!txt) return null;
-    return txt.trim().replace(/\s+/g, ' ');
+  function nearestLabelText(el) {
+    const ctx = el.closest('section, li, [class*="row"], [class*="usage"], [class*="quota"], [class*="card"], div');
+    return ((ctx && ctx.textContent) || el.textContent || '').toLowerCase();
+  }
+
+  function classify(label) {
+    if (!label) return null;
+    if (/\bsession\b|\b5[\s-]?h\b|five[\s-]?hour/.test(label)) return 'session';
+    if (/\bsonnet\b/.test(label)) return 'weekly_sonnet';
+    if (/\bopus\b/.test(label)) return 'weekly_opus';
+    if (/\bdesign|artifacts?\b/.test(label)) return 'weekly_design';
+    if (/\bweek|7[\s-]?day\b/.test(label)) return 'weekly_all';
+    return null;
   }
 
   function hashStr(s) {
@@ -47,61 +68,110 @@
 
   // ---- parser ----------------------------------------------------------------
 
+  // Map of exact label text (as it appears on page) → result key
+  const LABEL_MAP = {
+    'current session': 'session_pct',
+    'all models':      'weekly_all',
+    'sonnet only':     'weekly_sonnet',
+    'opus only':       'weekly_opus',
+    'claude design':   'weekly_design',
+    'design':          'weekly_design',
+  };
+
+  // Given a label span, walk up to the row container (flex-row wrapper),
+  // then find the [role="progressbar"] inside that row.
+  function pctFromLabelSpan(span) {
+    // The DOM structure:
+    //   <div class="flex w-full flex-row ...">       ← row container
+    //     <div class="flex w-[13rem] ...">           ← label column
+    //       <div class="flex items-center ...">
+    //         <span class="text-body text-primary">Label text</span>
+    //       </div>
+    //       <span>Resets in ...</span>
+    //     </div>
+    //     <div class="flex flex-1 ...">              ← bar column
+    //       <div ...>
+    //         <div role="progressbar" aria-valuenow="N" ...>
+    // Walk up 4 levels max to find the row (stops at section boundary).
+    let row = span.parentElement;
+    for (let i = 0; i < 6 && row && row.tagName !== 'SECTION'; i++) {
+      const bar = row.querySelector('[role="progressbar"]');
+      if (bar) return parsePctFromAny(bar);
+      row = row.parentElement;
+    }
+    return null;
+  }
+
   function parseUsagePage() {
     const result = {
       session_pct: null,
       weekly_all: null,
       weekly_sonnet: null,
+      weekly_opus: null,
       weekly_design: null,
       session_resets_in: null,
       weekly_resets_at: null,
+      plan: null,
       ts: new Date().toISOString(),
+      url: location.href,
     };
 
-    // Find all progress bars - aria role progressbar or div with width% style
-    const bars = Array.from(document.querySelectorAll('[role="progressbar"], .progress, [class*="progress"]'));
-    bars.forEach(bar => {
-      const pct = parsePct(bar.querySelector('[style*="width"]') || bar);
-      const label = (bar.closest('[class*="row"], section, .usage-item, li') || bar)
-        .textContent.toLowerCase();
-      if (label.includes('session') && result.session_pct === null) result.session_pct = pct;
-      else if (label.includes('sonnet') && result.weekly_sonnet === null) result.weekly_sonnet = pct;
-      else if (label.includes('design') && result.weekly_design === null) result.weekly_design = pct;
-      else if (label.includes('week') && result.weekly_all === null) result.weekly_all = pct;
+    // --- Primary: label-first scan ---
+    // Find all text-bearing spans/divs and match their text against LABEL_MAP.
+    // This is robust: label and progressbar are siblings inside a flex-row,
+    // so bar-first .closest() misses the label. Label-first walk finds the bar.
+    const candidates = Array.from(document.querySelectorAll('span, div, h3, h4, p'));
+    candidates.forEach(el => {
+      // Only leaf-ish text nodes to avoid huge textContent from containers
+      if (el.children.length > 3) return;
+      const txt = (el.textContent || '').trim().toLowerCase();
+      const key = LABEL_MAP[txt];
+      if (!key || result[key] != null) return;
+      const pct = pctFromLabelSpan(el);
+      if (pct != null) result[key] = pct;
     });
 
-    // Fallback: try percentage text nodes
-    if (result.session_pct === null && result.weekly_all === null) {
-      const sections = document.querySelectorAll('section, [class*="usage"], [class*="quota"]');
+    // --- Fallback: progressbar scan (catches any missed bars) ---
+    const bars = Array.from(document.querySelectorAll('[role="progressbar"]'));
+    bars.forEach(bar => {
+      const pct = parsePctFromAny(bar);
+      if (pct == null) return;
+      const key = classify(nearestLabelText(bar));
+      if (key && result[key] == null) result[key] = pct;
+    });
+
+    // --- Last-resort: text scan for "X% used" near keyword ---
+    if (result.session_pct == null || result.weekly_all == null) {
+      const sections = document.querySelectorAll('section, [class*="usage"], [class*="quota"], li');
       sections.forEach(sec => {
-        const txt = sec.textContent;
-        const m = txt.match(/([\d.]+)%/g);
-        if (m && m.length) {
-          const label = txt.toLowerCase();
-          const v = parseFloat(m[0]);
-          if (label.includes('session') && result.session_pct === null) result.session_pct = v;
-          else if (label.includes('week') && result.weekly_all === null) result.weekly_all = v;
-        }
+        const txt = (sec.textContent || '');
+        const m = txt.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+        if (!m) return;
+        const key = classify(txt.toLowerCase());
+        if (key && result[key] == null) result[key] = parseFloat(m[1]);
       });
     }
 
-    // Reset timers: look for text like "resets in Xh Ym" or "resets at HH:MM"
-    const fullText = document.body.innerText || '';
-    const resetIn = fullText.match(/resets?\s+in\s+([\d\w\s]+?)(?:\n|,|\.)/i);
-    if (resetIn) result.session_resets_in = parseTimeStr(resetIn[1]);
-    const resetAt = fullText.match(/resets?\s+(?:at\s+)?([\d]{1,2}:[\d]{2}[^\n,]{0,20})/i);
-    if (resetAt) result.weekly_resets_at = parseTimeStr(resetAt[1]);
+    const fullText = (document.body.innerText || '');
+    const resetIn = fullText.match(/resets?\s+in\s+([^\n,.]{1,40})/i);
+    if (resetIn) result.session_resets_in = resetIn[1].trim().replace(/\s+/g, ' ');
+    const resetAt = fullText.match(/resets?\s+(?:at\s+)?(\d{1,2}:\d{2}[^\n,]{0,30})/i);
+    if (resetAt) result.weekly_resets_at = resetAt[1].trim().replace(/\s+/g, ' ');
+
+    const planMatch = fullText.match(/\b(Pro|Max\s*\$?\d*|Team|Enterprise|Free)\b/);
+    if (planMatch) result.plan = planMatch[1].trim();
 
     return result;
   }
 
   // ---- POST to pl_server -----------------------------------------------------
 
-  function postUsage(payload) {
+  function postUsage(payload, onDone) {
     const body = JSON.stringify(payload);
     const hash = hashStr(body);
     if (hash === lastPayloadHash) {
       log('Skipping duplicate POST');
+      onDone && onDone({ skipped: true });
       return;
     }
     lastPayloadHash = hash;
@@ -110,50 +180,81 @@
       url: INGEST,
       headers: { 'Content-Type': 'application/json' },
       data: body,
+      timeout: 8000,
       onload: (r) => {
         try {
           const d = JSON.parse(r.responseText);
           log('Ingested:', d);
+          try { localStorage.setItem(LS_LAST, JSON.stringify({ ...payload, _server_ack: true })); } catch (_) {}
+          onDone && onDone({ ok: true, response: d });
         } catch (e) {
           log('Ingest response parse error:', r.responseText);
+          onDone && onDone({ ok: false, error: 'parse' });
         }
       },
-      onerror: (e) => log('Ingest error:', e),
+      onerror: (e) => {
+        log('Ingest error (server down?):', e);
+        try { localStorage.setItem(LS_LAST, JSON.stringify({ ...payload, _server_ack: false })); } catch (_) {}
+        onDone && onDone({ ok: false, error: 'network' });
+      },
+      ontimeout: () => onDone && onDone({ ok: false, error: 'timeout' }),
     });
+  }
+
+  // ---- UI overlay ------------------------------------------------------------
+
+  function fmtPct(v) { return v == null ? '—' : `${v.toFixed(0)}%`; }
+
+  function ensureOverlay() {
+    let box = document.getElementById('lg13-usage-overlay');
+    if (box) return box;
+    box = document.createElement('div');
+    box.id = 'lg13-usage-overlay';
+    box.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;'
+      + 'background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;'
+      + 'padding:10px 14px;font:12px/1.4 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.4);'
+      + 'min-width:220px;cursor:pointer';
+    box.title = 'Click to sync now';
+    box.addEventListener('click', () => run(true));
+    document.body.appendChild(box);
+    return box;
+  }
+
+  function renderOverlay(payload, status) {
+    const box = ensureOverlay();
+    const tone = status && status.ok ? '#22c55e' : (status && status.skipped ? '#94a3b8' : '#ef4444');
+    const sub = status && status.ok ? 'synced' : (status && status.skipped ? 'no change' : 'offline');
+    box.innerHTML =
+      `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">`
+      + `<strong>LG13 Usage</strong>`
+      + `<span style="color:${tone};font-size:11px">●&nbsp;${sub}</span></div>`
+      + `<div style="margin-top:6px">session: <strong>${fmtPct(payload.session_pct)}</strong>`
+      + (payload.session_resets_in ? ` · resets ${payload.session_resets_in}` : '') + `</div>`
+      + `<div>week: <strong>${fmtPct(payload.weekly_all)}</strong>`
+      + (payload.weekly_opus != null ? ` · opus ${fmtPct(payload.weekly_opus)}` : '')
+      + (payload.weekly_sonnet != null ? ` · son ${fmtPct(payload.weekly_sonnet)}` : '') + `</div>`
+      + (payload.plan ? `<div style="opacity:.7">plan: ${payload.plan}</div>` : '')
+      + `<div style="opacity:.5;font-size:10px;margin-top:4px">${new Date(payload.ts).toLocaleTimeString()}</div>`;
   }
 
   // ---- main loop -------------------------------------------------------------
 
-  function run() {
+  function run(force) {
     const payload = parseUsagePage();
     log('Parsed usage:', payload);
-    postUsage(payload);
+    if (force) lastPayloadHash = null;
+    postUsage(payload, (status) => renderOverlay(payload, status));
   }
 
-  // Inject refresh button
-  function injectButton() {
-    if (document.getElementById('lg13-usage-btn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'lg13-usage-btn';
-    btn.textContent = '↺ LG13 Sync Usage';
-    btn.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;padding:8px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.3)';
-    btn.onclick = () => { run(); btn.textContent = '✓ Synced'; setTimeout(() => { btn.textContent = '↺ LG13 Sync Usage'; }, 2000); };
-    document.body.appendChild(btn);
-  }
-
-  // Wait for page to load then run
   const observer = new MutationObserver(() => {
-    if (document.querySelector('[role="progressbar"], [class*="progress"]')) {
+    if (document.querySelector('[role="progressbar"], [class*="progress"], [class*="Progress"]')) {
       observer.disconnect();
-      setTimeout(() => { run(); injectButton(); }, 1000);
+      setTimeout(() => run(false), 1000);
     }
   });
   observer.observe(document.body, { childList: true, subtree: true });
 
-  // Poll every 5 minutes
-  setInterval(run, POLL_MS);
-
-  // Initial run after 2s
-  setTimeout(() => { run(); injectButton(); }, 2000);
+  setInterval(() => run(false), POLL_MS);
+  setTimeout(() => run(false), 2500);
 
 })();
