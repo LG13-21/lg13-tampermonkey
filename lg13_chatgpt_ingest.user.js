@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.9
-// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message [v4.9: btn moved above LOAD ALL]
+// @version      5.0
+// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message [v5.0: pl_server proxy]
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11,8 +11,8 @@
 // @connect      chatgpt.com
 // @connect      chat.openai.com
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_ingest.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_ingest.user.js
+// @updateURL    http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_ingest.user.js
+// @downloadURL  http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_ingest.user.js
 // ==/UserScript==
 
 // CHANGES vs v4.4:

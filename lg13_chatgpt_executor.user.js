@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.2
-// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.2: + @updateURL]
+// @version      1.3
+// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.3: pl_server proxy]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_executor.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_executor.user.js
+// @updateURL    http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_executor.user.js
+// @downloadURL  http://127.0.0.1:8790/pl/tmonkey/lg13_chatgpt_executor.user.js
 // ==/UserScript==
 
 (function () {
