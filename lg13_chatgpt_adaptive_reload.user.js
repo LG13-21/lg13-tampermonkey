@@ -6,6 +6,8 @@
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
 // ==/UserScript==
 
 // PATCH v1.2 (coder, 2026-05-11):
