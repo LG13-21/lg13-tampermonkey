@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.9
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload + Firefox-only lock. (#2687) [v2.9: Firefox-only (Tom uses Chrome interactively, so monitor lives in FF); positional zip-walk parser; auto-reload every REFRESH_MS]
+// @version      3.0
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload + Firefox-only lock. (#2687) [v3.0: container-first parser (fixes shifted values after claude.ai DOM restructure); bidirectional fallback; POLL_MS 2min]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -28,8 +28,8 @@
   window.__LG13_USAGE__ = true;
 
   const INGEST     = 'http://127.0.0.1:8790/pl/usage/ingest';
-  const POLL_MS    = 5  * 60 * 1000; // re-parse + POST
-  const REFRESH_MS = 15 * 60 * 1000; // hard reload of the page (claude.ai re-fetch)
+  const POLL_MS    = 2  * 60 * 1000; // re-parse + POST
+  const REFRESH_MS = 10 * 60 * 1000; // hard reload of the page (claude.ai re-fetch)
   const LS_LAST    = 'lg13_usage_last';
   const log = (...a) => console.log('[LG13-USAGE]', ...a);
 
@@ -109,27 +109,56 @@
       url: location.href,
     };
 
-    // Single DOM-ordered list of every candidate node: label-bearing elements + progressbars.
-    // We then walk through it; each matched label gets paired with the FIRST progressbar
-    // that follows it AND has not already been claimed.
+    // Strategy 1 — container-first (v3.0).
+    // claude.ai uses card/row containers where label and progressbar are siblings.
+    // Walk each bar upward until we find a container with exactly 1 bar + a matching label.
+    const claimedBars = new Set();
+    const bars = Array.from(document.querySelectorAll('[role="progressbar"]'));
+
+    bars.forEach(bar => {
+      const pct = parsePctFromAny(bar);
+      if (pct == null) return;
+      let el = bar.parentElement;
+      for (let depth = 0; depth < 9; depth++) {
+        if (!el || el === document.body) break;
+        // Skip containers that hold multiple bars (too broad).
+        if (el.querySelectorAll('[role="progressbar"]').length > 1) {
+          el = el.parentElement; continue;
+        }
+        const txt = (el.textContent || '').trim().toLowerCase();
+        // Try exact LABEL_MAP match first.
+        let key = LABEL_MAP[txt];
+        if (!key) {
+          for (const k of LABEL_KEYS) {
+            if (txt === k || txt.startsWith(k + '\n') || txt.startsWith(k + ' ') || txt.includes('\n' + k)) {
+              key = LABEL_MAP[k]; break;
+            }
+          }
+        }
+        // Fallback classify by keyword.
+        if (!key) key = classify(txt);
+        if (key && result[key] == null) {
+          result[key] = pct;
+          claimedBars.add(bar);
+          break;
+        }
+        el = el.parentElement;
+      }
+    });
+
+    // Strategy 2 — positional zip-walk for any bars still unclaimed.
+    // Handles edge cases where container approach misses (no wrapping element).
     const all = Array.from(document.querySelectorAll(
       'h1, h2, h3, h4, h5, h6, strong, span, p, div, [role="progressbar"]'
     ));
-
-    // Pass 1 — collect labels and bars with their positional indices.
-    const labelHits = []; // [{ idx, key }]
-    const barIdxs   = []; // [idx]
+    const labelHits = [];
+    const barIdxs   = [];
     const seenKey   = new Set();
     all.forEach((el, idx) => {
-      if (isProgressbar(el)) {
-        barIdxs.push(idx);
-        return;
-      }
-      // Only leaf-ish (avoid huge container textContent that matches multiple keys).
+      if (isProgressbar(el)) { barIdxs.push(idx); return; }
       if (el.children.length > 2) return;
       const txt = (el.textContent || '').trim().toLowerCase();
       if (!txt || txt.length > 80) return;
-
       let matchedKey = LABEL_MAP[txt];
       if (!matchedKey) {
         for (const k of LABEL_KEYS) {
@@ -139,35 +168,50 @@
         }
       }
       if (!matchedKey) return;
-      if (seenKey.has(matchedKey)) return; // first occurrence wins
+      if (seenKey.has(matchedKey)) return;
       seenKey.add(matchedKey);
       labelHits.push({ idx, key: matchedKey });
     });
-
-    // Pass 2 — for each label hit, claim the first bar that lies AFTER it.
-    const claimedBars = new Set();
+    // Forward walk (label before bar).
     labelHits.forEach(hit => {
+      if (result[hit.key] != null) return; // already claimed by container pass
       for (const bIdx of barIdxs) {
         if (bIdx <= hit.idx) continue;
-        if (claimedBars.has(bIdx)) continue;
-        const pct = parsePctFromAny(all[bIdx]);
+        const bar2 = all[bIdx];
+        if (claimedBars.has(bar2)) continue;
+        const pct = parsePctFromAny(bar2);
         if (pct == null) continue;
         result[hit.key] = pct;
-        claimedBars.add(bIdx);
+        claimedBars.add(bar2);
+        break;
+      }
+    });
+    // Backward walk (bar before label) — handles new DOM order.
+    labelHits.forEach(hit => {
+      if (result[hit.key] != null) return;
+      for (let i = barIdxs.length - 1; i >= 0; i--) {
+        const bIdx = barIdxs[i];
+        if (bIdx >= hit.idx) continue;
+        const bar2 = all[bIdx];
+        if (claimedBars.has(bar2)) continue;
+        const pct = parsePctFromAny(bar2);
+        if (pct == null) continue;
+        result[hit.key] = pct;
+        claimedBars.add(bar2);
         break;
       }
     });
 
     // Fallback — any leftover bar gets classified by nearby textual context.
     barIdxs.forEach(bIdx => {
-      if (claimedBars.has(bIdx)) return;
-      const bar = all[bIdx];
-      const pct = parsePctFromAny(bar);
+      const bar2 = all[bIdx];
+      if (claimedBars.has(bar2)) return;
+      const pct = parsePctFromAny(bar2);
       if (pct == null) return;
-      const key = classify(nearestLabelText(bar));
+      const key = classify(nearestLabelText(bar2));
       if (key && result[key] == null) {
         result[key] = pct;
-        claimedBars.add(bIdx);
+        claimedBars.add(bar2);
       }
     });
 
