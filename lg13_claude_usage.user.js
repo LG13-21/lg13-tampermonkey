@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      2.7
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Shows last-sync overlay. (#2687) [v2.7: aria-valuenow primary + forward-sibling-walk from h3 label (fixes querySelector-returns-first-bar bug); handles label-with-subtitle pattern]
+// @version      2.9
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload + Firefox-only lock. (#2687) [v2.9: Firefox-only (Tom uses Chrome interactively, so monitor lives in FF); positional zip-walk parser; auto-reload every REFRESH_MS]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -14,15 +14,27 @@
 (function () {
   'use strict';
 
+  // ---- engine lock: Firefox only -------------------------------------------
+  // Tom directive 2026-05-12: run only in one browser to avoid duplicate POSTs.
+  // FF chosen — Chrome is Tom's interactive workspace; monitor runs in FF.
+  const ua = navigator.userAgent || '';
+  const isFirefox = /Firefox\//i.test(ua) && !/Seamonkey\//i.test(ua);
+  if (!isFirefox) {
+    console.log('[LG13-USAGE] Disabled — not Firefox (engine lock v2.9). UA:', ua);
+    return;
+  }
+
   if (window.__LG13_USAGE__) return;
   window.__LG13_USAGE__ = true;
 
-  const INGEST = 'http://127.0.0.1:8790/pl/usage/ingest';
-  const POLL_MS = 5 * 60 * 1000;
-  const LS_LAST = 'lg13_usage_last';
+  const INGEST     = 'http://127.0.0.1:8790/pl/usage/ingest';
+  const POLL_MS    = 5  * 60 * 1000; // re-parse + POST
+  const REFRESH_MS = 15 * 60 * 1000; // hard reload of the page (claude.ai re-fetch)
+  const LS_LAST    = 'lg13_usage_last';
   const log = (...a) => console.log('[LG13-USAGE]', ...a);
 
   let lastPayloadHash = null;
+  let refreshTimer = null;
 
   // ---- helpers ---------------------------------------------------------------
 
@@ -45,6 +57,10 @@
     return null;
   }
 
+  function isProgressbar(el) {
+    return el && el.getAttribute && el.getAttribute('role') === 'progressbar';
+  }
+
   function nearestLabelText(el) {
     const ctx = el.closest('section, li, [class*="row"], [class*="usage"], [class*="quota"], [class*="card"], div');
     return ((ctx && ctx.textContent) || el.textContent || '').toLowerCase();
@@ -52,11 +68,11 @@
 
   function classify(label) {
     if (!label) return null;
-    if (/\bsession\b|\b5[\s-]?h\b|five[\s-]?hour/.test(label)) return 'session';
+    if (/\bsession\b|\b5[\s-]?h\b|five[\s-]?hour/.test(label)) return 'session_pct';
     if (/\bsonnet\b/.test(label)) return 'weekly_sonnet';
     if (/\bopus\b/.test(label)) return 'weekly_opus';
     if (/\bdesign|artifacts?\b/.test(label)) return 'weekly_design';
-    if (/\bweek|7[\s-]?day\b/.test(label)) return 'weekly_all';
+    if (/\bweek|7[\s-]?day|all\s+models\b/.test(label)) return 'weekly_all';
     return null;
   }
 
@@ -66,9 +82,7 @@
     return h.toString(16);
   }
 
-  // ---- parser ----------------------------------------------------------------
-
-  // Map of exact label text (as it appears on page) → result key
+  // Map of normalized label text → result key.
   const LABEL_MAP = {
     'current session': 'session_pct',
     'all models':      'weekly_all',
@@ -77,40 +91,9 @@
     'claude design':   'weekly_design',
     'design':          'weekly_design',
   };
+  const LABEL_KEYS = Object.keys(LABEL_MAP);
 
-  // Given a label span, find the associated progressbar value.
-  // KEY INSIGHT (v2.7): label and bar live in adjacent column containers.
-  // Walking ancestors with querySelector returns the FIRST progressbar in subtree
-  // — wrong for non-first sections (Sonnet/Opus/Design under Weekly limits row).
-  // Fix: forward-sibling walk from label, prefer aria-valuenow attribute.
-  function pctFromLabelSpan(span) {
-    // Strategy A: forward siblings of the label span itself
-    let sib = span.nextElementSibling;
-    while (sib) {
-      const bar = sib.matches && sib.matches('[role="progressbar"]') ? sib : (sib.querySelector && sib.querySelector('[role="progressbar"]'));
-      if (bar) return parsePctFromAny(bar);
-      sib = sib.nextElementSibling;
-    }
-    // Strategy B: walk up; at each level inspect following siblings of current node
-    let node = span.parentElement;
-    for (let i = 0; i < 6 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN' && node !== document.body; i++) {
-      let s = node.nextElementSibling;
-      while (s) {
-        const bar = s.matches && s.matches('[role="progressbar"]') ? s : (s.querySelector && s.querySelector('[role="progressbar"]'));
-        if (bar) return parsePctFromAny(bar);
-        s = s.nextElementSibling;
-      }
-      node = node.parentElement;
-    }
-    // Strategy C (last resort): closest container that has EXACTLY one progressbar (scoped)
-    node = span.parentElement;
-    for (let i = 0; i < 8 && node && node.tagName !== 'SECTION' && node.tagName !== 'MAIN' && node !== document.body; i++) {
-      const bars = node.querySelectorAll('[role="progressbar"]');
-      if (bars.length === 1) return parsePctFromAny(bars[0]);
-      node = node.parentElement;
-    }
-    return null;
-  }
+  // ---- parser (v2.8 positional zip-walk) -------------------------------------
 
   function parseUsagePage() {
     const result = {
@@ -126,39 +109,69 @@
       url: location.href,
     };
 
-    // --- Primary: label-first scan ---
-    // Find text-bearing elements and match against LABEL_MAP.
-    // v2.7: allow startsWith() match (label may have "\nResets..." subtitle in textContent),
-    // and use forward-sibling walk in pctFromLabelSpan (not ancestor querySelector).
-    const labelKeys = Object.keys(LABEL_MAP);
-    const candidates = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, strong, span, p, div'));
-    candidates.forEach(el => {
-      // Only leaf-ish nodes to avoid huge container textContent
+    // Single DOM-ordered list of every candidate node: label-bearing elements + progressbars.
+    // We then walk through it; each matched label gets paired with the FIRST progressbar
+    // that follows it AND has not already been claimed.
+    const all = Array.from(document.querySelectorAll(
+      'h1, h2, h3, h4, h5, h6, strong, span, p, div, [role="progressbar"]'
+    ));
+
+    // Pass 1 — collect labels and bars with their positional indices.
+    const labelHits = []; // [{ idx, key }]
+    const barIdxs   = []; // [idx]
+    const seenKey   = new Set();
+    all.forEach((el, idx) => {
+      if (isProgressbar(el)) {
+        barIdxs.push(idx);
+        return;
+      }
+      // Only leaf-ish (avoid huge container textContent that matches multiple keys).
       if (el.children.length > 2) return;
       const txt = (el.textContent || '').trim().toLowerCase();
-      if (!txt) return;
-      // Try exact match first, then startsWith (handles "current session\nresets in...")
+      if (!txt || txt.length > 80) return;
+
       let matchedKey = LABEL_MAP[txt];
       if (!matchedKey) {
-        for (const k of labelKeys) {
-          if (txt.startsWith(k)) { matchedKey = LABEL_MAP[k]; break; }
+        for (const k of LABEL_KEYS) {
+          if (txt === k || txt.startsWith(k + '\n') || txt.startsWith(k + ' ')) {
+            matchedKey = LABEL_MAP[k]; break;
+          }
         }
       }
-      if (!matchedKey || result[matchedKey] != null) return;
-      const pct = pctFromLabelSpan(el);
-      if (pct != null) result[matchedKey] = pct;
+      if (!matchedKey) return;
+      if (seenKey.has(matchedKey)) return; // first occurrence wins
+      seenKey.add(matchedKey);
+      labelHits.push({ idx, key: matchedKey });
     });
 
-    // --- Fallback: progressbar scan (catches any missed bars) ---
-    const bars = Array.from(document.querySelectorAll('[role="progressbar"]'));
-    bars.forEach(bar => {
+    // Pass 2 — for each label hit, claim the first bar that lies AFTER it.
+    const claimedBars = new Set();
+    labelHits.forEach(hit => {
+      for (const bIdx of barIdxs) {
+        if (bIdx <= hit.idx) continue;
+        if (claimedBars.has(bIdx)) continue;
+        const pct = parsePctFromAny(all[bIdx]);
+        if (pct == null) continue;
+        result[hit.key] = pct;
+        claimedBars.add(bIdx);
+        break;
+      }
+    });
+
+    // Fallback — any leftover bar gets classified by nearby textual context.
+    barIdxs.forEach(bIdx => {
+      if (claimedBars.has(bIdx)) return;
+      const bar = all[bIdx];
       const pct = parsePctFromAny(bar);
       if (pct == null) return;
       const key = classify(nearestLabelText(bar));
-      if (key && result[key] == null) result[key] = pct;
+      if (key && result[key] == null) {
+        result[key] = pct;
+        claimedBars.add(bIdx);
+      }
     });
 
-    // --- Last-resort: text scan for "X% used" near keyword ---
+    // Last-resort text scan for any still-null primary fields.
     if (result.session_pct == null || result.weekly_all == null) {
       const sections = document.querySelectorAll('section, [class*="usage"], [class*="quota"], li');
       sections.forEach(sec => {
@@ -231,9 +244,10 @@
     box.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:9999;'
       + 'background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:8px;'
       + 'padding:10px 14px;font:12px/1.4 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.4);'
-      + 'min-width:220px;cursor:pointer';
-    box.title = 'Click to sync now';
+      + 'min-width:240px;cursor:pointer';
+    box.title = 'Click to sync now · double-click to reload page';
     box.addEventListener('click', () => run(true));
+    box.addEventListener('dblclick', (e) => { e.preventDefault(); location.reload(); });
     document.body.appendChild(box);
     return box;
   }
@@ -249,8 +263,10 @@
       + `<div style="margin-top:6px">session: <strong>${fmtPct(payload.session_pct)}</strong>`
       + (payload.session_resets_in ? ` · resets ${payload.session_resets_in}` : '') + `</div>`
       + `<div>week: <strong>${fmtPct(payload.weekly_all)}</strong>`
-      + (payload.weekly_opus != null ? ` · opus ${fmtPct(payload.weekly_opus)}` : '')
-      + (payload.weekly_sonnet != null ? ` · son ${fmtPct(payload.weekly_sonnet)}` : '') + `</div>`
+      + (payload.weekly_sonnet != null ? ` · son ${fmtPct(payload.weekly_sonnet)}` : '')
+      + (payload.weekly_opus   != null ? ` · opus ${fmtPct(payload.weekly_opus)}` : '')
+      + (payload.weekly_design != null ? ` · des ${fmtPct(payload.weekly_design)}` : '')
+      + `</div>`
       + (payload.plan ? `<div style="opacity:.7">plan: ${payload.plan}</div>` : '')
       + `<div style="opacity:.5;font-size:10px;margin-top:4px">${new Date(payload.ts).toLocaleTimeString()}</div>`;
   }
@@ -274,5 +290,12 @@
 
   setInterval(() => run(false), POLL_MS);
   setTimeout(() => run(false), 2500);
+
+  // Hard reload — claude.ai refetches usage on full page load.
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    log('Auto-reloading page after', REFRESH_MS, 'ms');
+    location.reload();
+  }, REFRESH_MS);
 
 })();
