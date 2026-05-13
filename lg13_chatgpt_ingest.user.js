@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.8 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.9
+// @version      4.9.1
 // @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
@@ -38,7 +38,7 @@
   var GLYPH_WRN = String.fromCodePoint(0x26A0);
   var GLYPH_HRG = String.fromCodePoint(0x23F3);
 
-  const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
+  const LG13_URL = 'http://127.0.0.1:8791/pl/chatgpt/ingest'; // DEBUG: temp redirect
   const API_BASE = location.origin + '/backend-api/conversation/';
   const DEBOUNCE_MS = 2000;
   const SCHEMA_VERSION = 'lg13.v4.7';
