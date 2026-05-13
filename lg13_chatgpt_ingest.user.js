@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.8 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.9.1
+// @version      4.9.2
 // @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
@@ -30,8 +30,9 @@
 (function () {
   'use strict';
 
-  if (window.__LG13_RUNNING__) return;
-  window.__LG13_RUNNING__ = true;
+  const _lg13g = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : (typeof globalThis !== 'undefined' ? globalThis : window);
+  if (_lg13g.__LG13_RUNNING__) return;
+  _lg13g.__LG13_RUNNING__ = true;
 
   var GLYPH_HEX = String.fromCodePoint(0x2B21);
   var GLYPH_OK  = String.fromCodePoint(0x2713);
@@ -59,7 +60,7 @@
     const m = location.href.match(/\/c\/([a-f0-9-]{36})/);
     if (m) return m[1];
     const seed = (document.title || '') +
-      (document.body.innerText.slice(0, 500) || '');
+      (document.body ? document.body.innerText.slice(0, 500) : '');
     return 'fallback_' + hashStr(seed);
   }
 
@@ -121,11 +122,9 @@
 
   function stripLg13Trailer(text) {
     if (!text) return text;
-    // 1. fenced code block wrap (
-...) — protocol v2 default
+    // 1. fenced code block wrap (``` ... ```) — protocol v2 default
     let t = text.replace(
-      /(?:\n?---\s*\n)?
-[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?\s*$/,
+      /(?:\n?---\s*\n)?```[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?```\s*$/i,
       ''
     );
     // 2. HTML comment wrap (voice/TTS skip)
@@ -267,7 +266,7 @@
         w: w || null, h: h || null
       });
       const marker = document.createTextNode(' ' + token + ' ');
-      img.parentNode.insertBefore(marker, img);
+      if (img.parentNode) img.parentNode.insertBefore(marker, img);
       n++;
     });
     return out;
