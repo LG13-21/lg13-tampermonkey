@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      3.0
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload + Firefox-only lock. (#2687) [v3.0: container-first parser (fixes shifted values after claude.ai DOM restructure); bidirectional fallback; POLL_MS 2min]
+// @version      3.1
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload + Edge/Firefox lock. (#2687) [v3.1: Edge support added; v3.0: container-first parser (fixes shifted values after claude.ai DOM restructure); bidirectional fallback; POLL_MS 2min]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -14,13 +14,14 @@
 (function () {
   'use strict';
 
-  // ---- engine lock: Firefox only -------------------------------------------
-  // Tom directive 2026-05-12: run only in one browser to avoid duplicate POSTs.
-  // FF chosen — Chrome is Tom's interactive workspace; monitor runs in FF.
+  // ---- engine lock: Edge or Firefox only ------------------------------------
+  // Tom directive 2026-05-12 (updated 2026-05-13): run only in one browser to avoid duplicate POSTs.
+  // Edge or Firefox OK — Chrome is Tom's interactive workspace.
   const ua = navigator.userAgent || '';
   const isFirefox = /Firefox\//i.test(ua) && !/Seamonkey\//i.test(ua);
-  if (!isFirefox) {
-    console.log('[LG13-USAGE] Disabled — not Firefox (engine lock v2.9). UA:', ua);
+  const isEdge    = /Edg\//i.test(ua);
+  if (!isFirefox && !isEdge) {
+    console.log('[LG13-USAGE] Disabled — not Firefox/Edge (engine lock v3.1). UA:', ua);
     return;
   }
 
