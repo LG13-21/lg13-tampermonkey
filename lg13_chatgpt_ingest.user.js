@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.8 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.8
+// @version      4.9
 // @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
@@ -472,8 +472,7 @@
   }
 
   function init() {
-    buildUI();
-    showStatus('pripojen', '#4ade80');
+    try { buildUI(); showStatus('pripojen', '#4ade80'); } catch(e) { err('buildUI failed:', e); }
 
     const obs = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -484,12 +483,11 @@
     setInterval(() => {
       if (!document.getElementById('lg13-shadow-host')) {
         shadow = null;
-        buildUI();
-        showStatus('obnoveno', '#4ade80');
+        try { buildUI(); showStatus('obnoveno', '#4ade80'); } catch(e) {}
       }
     }, 3000);
 
-    log('LG13 v4.7 running (api ts + images + meta + atoms)');
+    log('LG13 v4.9 running (api ts + images + meta + atoms)');
   }
 
   init();
