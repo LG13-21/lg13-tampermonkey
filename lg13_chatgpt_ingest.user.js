@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ChatGPT -> LG13 Ingest (v4.8 + LG13_META trailer + ATOM split)
+// @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.9.2
-// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message
+// @version      5.1
+// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message [v5.1: github raw (repo public)]
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -11,8 +11,8 @@
 // @connect      chatgpt.com
 // @connect      chat.openai.com
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_ingest.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_ingest.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_ingest.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_ingest.user.js
 // ==/UserScript==
 
 // CHANGES vs v4.4:
@@ -30,16 +30,15 @@
 (function () {
   'use strict';
 
-  const _lg13g = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : (typeof globalThis !== 'undefined' ? globalThis : window);
-  if (_lg13g.__LG13_RUNNING__) return;
-  _lg13g.__LG13_RUNNING__ = true;
+  if (window.__LG13_RUNNING__) return;
+  window.__LG13_RUNNING__ = true;
 
   var GLYPH_HEX = String.fromCodePoint(0x2B21);
   var GLYPH_OK  = String.fromCodePoint(0x2713);
   var GLYPH_WRN = String.fromCodePoint(0x26A0);
   var GLYPH_HRG = String.fromCodePoint(0x23F3);
 
-  const LG13_URL = 'http://127.0.0.1:8791/pl/chatgpt/ingest'; // DEBUG: temp redirect
+  const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
   const API_BASE = location.origin + '/backend-api/conversation/';
   const DEBOUNCE_MS = 2000;
   const SCHEMA_VERSION = 'lg13.v4.7';
@@ -60,7 +59,7 @@
     const m = location.href.match(/\/c\/([a-f0-9-]{36})/);
     if (m) return m[1];
     const seed = (document.title || '') +
-      (document.body ? document.body.innerText.slice(0, 500) : '');
+      (document.body.innerText.slice(0, 500) || '');
     return 'fallback_' + hashStr(seed);
   }
 
@@ -122,9 +121,9 @@
 
   function stripLg13Trailer(text) {
     if (!text) return text;
-    // 1. fenced code block wrap (``` ... ```) — protocol v2 default
+    // 1. fenced code block wrap (```...```) — protocol v2 default
     let t = text.replace(
-      /(?:\n?---\s*\n)?```[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?```\s*$/i,
+      /(?:\n?---\s*\n)?```[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?```\s*$/,
       ''
     );
     // 2. HTML comment wrap (voice/TTS skip)
@@ -266,7 +265,7 @@
         w: w || null, h: h || null
       });
       const marker = document.createTextNode(' ' + token + ' ');
-      if (img.parentNode) img.parentNode.insertBefore(marker, img);
+      img.parentNode.insertBefore(marker, img);
       n++;
     });
     return out;
@@ -414,7 +413,7 @@
     const style = document.createElement('style');
     style.textContent = [
       ':host { all: initial; }',
-      '#btn { position: fixed; bottom: 60px; right: 16px; z-index: 2147483647;',
+      '#btn { position: fixed; bottom: 160px; right: 16px; z-index: 2147483647;',
       '       background: #07101e; border: 1px solid #1e3358; color: #4b8ef5;',
       '       padding: 5px 10px; border-radius: 6px; font-size: 11px;',
       '       cursor: pointer; font-family: monospace; font-weight: 600;',
@@ -471,7 +470,8 @@
   }
 
   function init() {
-    try { buildUI(); showStatus('pripojen', '#4ade80'); } catch(e) { err('buildUI failed:', e); }
+    buildUI();
+    showStatus('pripojen', '#4ade80');
 
     const obs = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -482,11 +482,12 @@
     setInterval(() => {
       if (!document.getElementById('lg13-shadow-host')) {
         shadow = null;
-        try { buildUI(); showStatus('obnoveno', '#4ade80'); } catch(e) {}
+        buildUI();
+        showStatus('obnoveno', '#4ade80');
       }
     }, 3000);
 
-    log('LG13 v4.9 running (api ts + images + meta + atoms)');
+    log('LG13 v4.7 running (api ts + images + meta + atoms)');
   }
 
   init();
