@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      3.2
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.2: Chrome allowed (engine lock removed); v3.1: Edge support added; v3.0: container-first parser; bidirectional fallback; POLL_MS 2min]
+// @version      3.3
+// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.3: fix field mapping — all_models check before sonnet in classify(), label-only text in container pass; v3.2: Chrome allowed; v3.1: Edge support; v3.0: container-first parser]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -63,10 +63,12 @@
   function classify(label) {
     if (!label) return null;
     if (/\bsession\b|\b5[\s-]?h\b|five[\s-]?hour/.test(label)) return 'session_pct';
+    // all_models MUST come before sonnet — "All models" container may contain "Sonnet" in sublabels
+    if (/\ball[\s-]?models\b/.test(label)) return 'weekly_all';
     if (/\bsonnet\b/.test(label)) return 'weekly_sonnet';
     if (/\bopus\b/.test(label)) return 'weekly_opus';
     if (/\bdesign|artifacts?\b/.test(label)) return 'weekly_design';
-    if (/\bweek|7[\s-]?day|all\s+models\b/.test(label)) return 'weekly_all';
+    if (/\bweek|7[\s-]?day\b/.test(label)) return 'weekly_all';
     return null;
   }
 
@@ -78,12 +80,19 @@
 
   // Map of normalized label text → result key.
   const LABEL_MAP = {
-    'current session': 'session_pct',
-    'all models':      'weekly_all',
-    'sonnet only':     'weekly_sonnet',
-    'opus only':       'weekly_opus',
-    'claude design':   'weekly_design',
-    'design':          'weekly_design',
+    'current session':    'session_pct',
+    'session':            'session_pct',
+    'all models':         'weekly_all',
+    'all claude models':  'weekly_all',
+    'sonnet only':        'weekly_sonnet',
+    'claude sonnet':      'weekly_sonnet',
+    'sonnet':             'weekly_sonnet',
+    'opus only':          'weekly_opus',
+    'claude opus':        'weekly_opus',
+    'opus':               'weekly_opus',
+    'claude design':      'weekly_design',
+    'design':             'weekly_design',
+    'artifacts':          'weekly_design',
   };
   const LABEL_KEYS = Object.keys(LABEL_MAP);
 
@@ -119,7 +128,14 @@
         if (el.querySelectorAll('[role="progressbar"]').length > 1) {
           el = el.parentElement; continue;
         }
-        const txt = (el.textContent || '').trim().toLowerCase();
+        // Prefer a short direct-child label element over full container text.
+        // Full textContent may include sublabels (e.g. "All models ... Sonnet ... Opus") that
+        // confuse classify() — use it only when no short child label is found.
+        const labelEl = el.querySelector('h1,h2,h3,h4,h5,h6,strong,span,p,div');
+        const labelElTxt = labelEl ? labelEl.textContent.trim().toLowerCase() : '';
+        const txt = (labelElTxt && labelElTxt.length > 0 && labelElTxt.length <= 60)
+          ? labelElTxt
+          : (el.textContent || '').trim().toLowerCase();
         // Try exact LABEL_MAP match first.
         let key = LABEL_MAP[txt];
         if (!key) {
