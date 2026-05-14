@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      3.3
-// @description  Parse Claude usage page (session/weekly %, resets, plan) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.3: fix field mapping — all_models check before sonnet in classify(), label-only text in container pass; v3.2: Chrome allowed; v3.1: Edge support; v3.0: container-first parser]
+// @version      3.4
+// @description  Parse Claude usage page (session/weekly %, resets, plan, extra usage EUR) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.4: extra usage EUR parsing (extra_spent_eur/extra_limit_eur/extra_balance_eur); v3.3: fix field mapping; v3.2: Chrome allowed; v3.1: Edge support; v3.0: container-first parser]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -246,6 +246,17 @@
     const planMatch = fullText.match(/\b(Pro|Max\s*\$?\d*|Team|Enterprise|Free)\b/);
     if (planMatch) result.plan = planMatch[1].trim();
 
+    // Extra usage billing (EUR) — "€47.65 spent", "€50 Monthly spend limit", "Current balance €15.01"
+    const eurNum = s => parseFloat(s.replace(/,/g, '.'));
+    const mSpent = fullText.match(/€\s*([\d,]+\.?\d*)\s*spent/i);
+    if (mSpent) result.extra_spent_eur = eurNum(mSpent[1]);
+    const mLimit = fullText.match(/€\s*([\d,]+\.?\d*)\s*[Mm]onthly\s*spend\s*limit/i);
+    if (mLimit) result.extra_limit_eur = eurNum(mLimit[1]);
+    const mBalance = fullText.match(/[Cc]urrent\s*balance\s*[:\s]*€\s*([\d,]+\.?\d*)/i);
+    if (mBalance) result.extra_balance_eur = eurNum(mBalance[1]);
+    const mExtraResets = fullText.match(/[Rr]esets\s+([A-Z][a-z]{2}\s+\d{1,2})/);
+    if (mExtraResets) result.extra_resets_at = mExtraResets[1].trim();
+
     return result;
   }
 
@@ -322,6 +333,11 @@
       + (payload.weekly_design != null ? ` · des ${fmtPct(payload.weekly_design)}` : '')
       + `</div>`
       + (payload.plan ? `<div style="opacity:.7">plan: ${payload.plan}</div>` : '')
+      + (payload.extra_spent_eur != null ? (() => {
+          const pct = payload.extra_limit_eur > 0 ? Math.round(payload.extra_spent_eur / payload.extra_limit_eur * 100) : '?';
+          const bal = payload.extra_balance_eur != null ? ` · bal €${payload.extra_balance_eur.toFixed(2)}` : '';
+          return `<div style="opacity:.85;color:#f59e0b">extra: ${pct}% (€${payload.extra_spent_eur.toFixed(2)}/€${payload.extra_limit_eur ?? '?'})${bal}</div>`;
+        })() : '')
       + `<div style="opacity:.5;font-size:10px;margin-top:4px">${new Date(payload.ts).toLocaleTimeString()}</div>`;
   }
 
