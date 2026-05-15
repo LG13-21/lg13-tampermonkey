@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      3.5
+// @version      3.6
 // @description  Parse Claude usage page (session/weekly %, resets, plan, extra usage EUR) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.4: extra usage EUR parsing (extra_spent_eur/extra_limit_eur/extra_balance_eur); v3.3: fix field mapping; v3.2: Chrome allowed; v3.1: Edge support; v3.0: container-first parser]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
@@ -240,7 +240,7 @@
 
     const fullText = (document.body.innerText || '');
     const resetIn = fullText.match(/resets?\s+in\s+([^\n,.]{1,40})/i);
-    if (resetIn) result.session_resets_in = resetIn[1].trim().replace(/\s+/g, ' ');
+    if (resetIn) { result.session_resets_in = resetIn[1].trim().replace(/\s+/g, ' '); result.session_resets_captured_at = new Date().toISOString(); }
     const resetAt = fullText.match(/resets?\s+(?:at\s+)?(\d{1,2}:\d{2}[^\n,]{0,30})/i);
     if (resetAt) result.weekly_resets_at = resetAt[1].trim().replace(/\s+/g, ' ');
 
