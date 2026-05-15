@@ -1,0 +1,16 @@
+# Editor
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local test config (never commit real endpoints/tokens)
+*.local.js
+config.local.*
+
+# Backup files
+*.bak
+*.orig
