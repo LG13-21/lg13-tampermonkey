@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         ChatGPT Adaptive Reload
 // @namespace    local.chatgpt
-// @version      1.5
-// @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.5: isTyping only when composer has content]
+// @version      1.6
+// @description  Adaptive page reload — Edge only, reload jen v idle, MIN 5 min [v1.6: Edge-only guard (nespouštět v FF/Chrome kde Tom pracuje)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_adaptive_reload.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_adaptive_reload.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_adaptive_reload.user.js
 // ==/UserScript==
 
 // PATCH v1.5 (coder, 2026-05-11):
@@ -25,6 +25,9 @@
 
 (function () {
 'use strict';
+
+// Edge-only guard — nespouštět v Firefox ani Chrome kde Tom pracuje
+if (!/Edg\//.test(navigator.userAgent)) return;
 
 const MIN_INTERVAL       = 5 * 60 * 1000;     // 5 min
 const MAX_INTERVAL       = 60 * 60 * 1000;    // 1 h

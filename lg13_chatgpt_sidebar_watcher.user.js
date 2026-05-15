@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         ChatGPT Sidebar Watcher
 // @namespace    local.chatgpt
-// @version      1.5
-// @description  Watch ChatGPT conversations (incl. projects) for keywords; backend API primary + DOM fallback [v1.5: backend API across all projects]
+// @version      1.6
+// @description  Watch ChatGPT conversations for keywords; Edge only [v1.6: Edge-only guard — nespouštět v FF/Chrome kde Tom pracuje]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_notification
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_sidebar_watcher.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_sidebar_watcher.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_sidebar_watcher.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_sidebar_watcher.user.js
 // ==/UserScript==
 
 // PATCH v1.5 (coder, 2026-05-11):
@@ -25,6 +25,9 @@
 
 (function () {
 'use strict';
+
+// Edge-only guard — nespouštět v Firefox ani Chrome kde Tom pracuje
+if (!/Edg\//.test(navigator.userAgent)) return;
 
 const CHECK_INTERVAL = 15000;
 const API_LIMIT = 200;
