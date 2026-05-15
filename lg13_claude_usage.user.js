@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      3.4
+// @version      3.5
 // @description  Parse Claude usage page (session/weekly %, resets, plan, extra usage EUR) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.4: extra usage EUR parsing (extra_spent_eur/extra_limit_eur/extra_balance_eur); v3.3: fix field mapping; v3.2: Chrome allowed; v3.1: Edge support; v3.0: container-first parser]
 // @match        https://claude.ai/settings/usage*
 // @grant        GM_xmlhttpRequest
@@ -22,8 +22,9 @@
   window.__LG13_USAGE__ = true;
 
   const INGEST     = 'http://127.0.0.1:8790/pl/usage/ingest';
-  const POLL_MS    = 2  * 60 * 1000; // re-parse + POST
-  const REFRESH_MS = 10 * 60 * 1000; // hard reload of the page (claude.ai re-fetch)
+  const POLL_MS        = 2 * 60 * 1000; // re-parse + POST
+  const REFRESH_MS_HI  = 1 * 60 * 1000; // extra usage or limit >= 80%
+  const REFRESH_MS_LO  = 3 * 60 * 1000; // normal
   const LS_LAST    = 'lg13_usage_last';
   const log = (...a) => console.log('[LG13-USAGE]', ...a);
 
@@ -362,10 +363,18 @@
   setTimeout(() => run(false), 2500);
 
   // Hard reload — claude.ai refetches usage on full page load.
+  // 1min if extra usage active or 5h/week >= 80%, else 3min.
   if (refreshTimer) clearTimeout(refreshTimer);
+  const _hi = (refreshTimer => {
+    const p = parseUsagePage();
+    const onExtra = p.extra_spent_eur != null && p.extra_limit_eur > 0;
+    const highLoad = (p.session_pct >= 80) || (p.weekly_all >= 80);
+    return onExtra || highLoad;
+  })();
+  const _delay = _hi ? REFRESH_MS_HI : REFRESH_MS_LO;
   refreshTimer = setTimeout(() => {
-    log('Auto-reloading page after', REFRESH_MS, 'ms');
+    log('Auto-reloading page after', _delay / 1000, 's');
     location.reload();
-  }, REFRESH_MS);
+  }, _delay);
 
 })();
