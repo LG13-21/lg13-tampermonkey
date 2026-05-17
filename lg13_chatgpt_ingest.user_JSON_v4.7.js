@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      4.7
-// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message
+// @version      4.8
+// @description  v4.7 + SPA navigation reset (fix: nový conv po kliknutí → ingest se spustí)
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -476,6 +476,25 @@
       debounceTimer = setTimeout(() => { onChange().catch(err); }, DEBOUNCE_MS);
     });
     obs.observe(document.body, { childList: true, subtree: true });
+
+    // SPA navigation: reset fingerprint when URL changes (new conversation)
+    let _lastUrl = location.href;
+    const _origPush = history.pushState.bind(history);
+    history.pushState = function(...args) {
+      _origPush(...args);
+      if (location.href !== _lastUrl) {
+        _lastUrl = location.href;
+        lastFingerprint = '';
+        setTimeout(() => onChange().catch(err), 1500);
+      }
+    };
+    window.addEventListener('popstate', () => {
+      if (location.href !== _lastUrl) {
+        _lastUrl = location.href;
+        lastFingerprint = '';
+        setTimeout(() => onChange().catch(err), 1500);
+      }
+    });
 
     setInterval(() => {
       if (!document.getElementById('lg13-shadow-host')) {
