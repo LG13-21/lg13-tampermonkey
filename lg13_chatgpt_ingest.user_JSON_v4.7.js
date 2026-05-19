@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
+// @name         ChatGPT -> LG13 Ingest (v4.9 + LG13_META v3.0 JSON footer)
 // @namespace    lg13.local
-// @version      4.8
-// @description  v4.7 + SPA navigation reset (fix: nový conv po kliknutí → ingest se spustí)
+// @version      4.9
+// @description  v4.8 + LG13_META v3.0: JSON code block format {"LG13_META":{...}} alongside legacy <<LG13_META>> key:value
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -13,17 +13,12 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-// CHANGES vs v4.4:
-//   - per-message extraction of <<LG13_META>>...<</LG13_META>> trailer
-//     (parsed from raw HTML comment or bare; stored as messages[i].lg13_meta)
-//   - supports adaptive protocol (FULL + DELTA modes): full keys
-//     (thread/topic/tags/refs/atom_break/followup) AND short aliases
-//     (th/tp/tg/rf/ab/fu) — both normalized to full keys before send
-//   - per-message [[ATOM]] split markers -> messages[i].lg13_atoms (array
-//     of pre-split atom texts; null if no marker found)
-//   - trailer stripped from messages[i].text so atomizer doesn't store
-//     it as content; hash uses stripped text for stable id
-//   - schema bumped to lg13.v4.7 (additive; server lg13.v4* dispatcher catches it)
+// CHANGES vs v4.8 (LG13 footer v3.0):
+//   - NEW: LG13_META v3.0 format — JSON fenced code block: ```json\n{"LG13_META":{...}}\n```
+//     Both old <<LG13_META>> key:value AND new JSON block are supported simultaneously.
+//   - extractLg13Meta() tries JSON block first, falls back to legacy key:value parser
+//   - stripLg13Trailer() strips both formats
+//   - schema bumped to lg13.v4.9
 
 (function () {
   'use strict';
@@ -39,7 +34,7 @@
   const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
   const API_BASE = location.origin + '/backend-api/conversation/';
   const DEBOUNCE_MS = 2000;
-  const SCHEMA_VERSION = 'lg13.v4.7';
+  const SCHEMA_VERSION = 'lg13.v4.9';
   const API_CACHE_TTL_MS = 60 * 1000;
 
   const log = (...a) => console.log('[LG13]', ...a);
@@ -83,6 +78,26 @@
 
   function extractLg13Meta(rawText) {
     if (!rawText) return null;
+
+    // --- v3.0 JSON block format: ```json\n{"LG13_META":{...}}\n``` ---
+    const jsonBlockMatch = rawText.match(/```json\s*\n\s*(\{[\s\S]*?"LG13_META"[\s\S]*?\})\s*\n\s*```/);
+    if (jsonBlockMatch) {
+      try {
+        const parsed = JSON.parse(jsonBlockMatch[1]);
+        const inner = parsed['LG13_META'] || parsed['lg13_meta'];
+        if (inner && typeof inner === 'object') {
+          // normalize short aliases
+          const normalized = {};
+          Object.entries(inner).forEach(([k, v]) => {
+            const realKey = LG13_KEY_ALIAS[k] || k;
+            if (v !== '' && v !== null && v !== undefined) normalized[realKey] = v;
+          });
+          return Object.keys(normalized).length ? normalized : null;
+        }
+      } catch (_) { /* fall through to legacy */ }
+    }
+
+    // --- legacy key:value format: <<LG13_META>>...<</LG13_META>> ---
     const m = rawText.match(/<<LG13_META>>([\s\S]*?)<<\/LG13_META>>/);
     if (!m) return null;
     const body = m[1];
@@ -94,11 +109,8 @@
       const realKey = LG13_KEY_ALIAS[rawKey] || rawKey;
       let v = mm[2];
       if (v === '') return;
-      // booleans
       if (v === 'true' || v === 'false') { meta[realKey] = (v === 'true'); return; }
-      // integers (ah/rk are 0|1|2)
       if (/^-?\d+$/.test(v)) { meta[realKey] = parseInt(v, 10); return; }
-      // arrays: try strict JSON first, then lenient (unquoted hashtags etc.)
       if (v.startsWith('[')) {
         try { meta[realKey] = JSON.parse(v); return; }
         catch (_) {
@@ -110,7 +122,6 @@
           return;
         }
       }
-      // strip surrounding quotes; "=" stays literal (delta carry-forward marker)
       v = v.replace(/^["']|["']$/g, '');
       meta[realKey] = v;
     });
@@ -119,17 +130,22 @@
 
   function stripLg13Trailer(text) {
     if (!text) return text;
-    // 1. fenced code block wrap (```...```) — protocol v2 default
+    // 1. v3.0 JSON block: ```json\n{"LG13_META":{...}}\n```
     let t = text.replace(
+      /\n?```json\s*\n\s*\{[\s\S]*?"LG13_META"[\s\S]*?\}\s*\n\s*```\s*$/,
+      ''
+    );
+    // 2. fenced code block wrap (```...```) — protocol v2 default with <<LG13_META>>
+    t = t.replace(
       /(?:\n?---\s*\n)?```[a-z]*\s*\n[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?```\s*$/,
       ''
     );
-    // 2. HTML comment wrap (voice/TTS skip)
+    // 3. HTML comment wrap (voice/TTS skip)
     t = t.replace(
       /(?:\n?---\s*\n)?<!--\s*[\s\S]*?<<LG13_META>>[\s\S]*?<<\/LG13_META>>[\s\S]*?-->\s*$/,
       ''
     );
-    // 3. bare trailer (no wrap)
+    // 4. bare trailer (no wrap)
     t = t.replace(
       /(?:\n?---\s*\n)?<<LG13_META>>[\s\S]*?<<\/LG13_META>>\s*$/,
       ''
