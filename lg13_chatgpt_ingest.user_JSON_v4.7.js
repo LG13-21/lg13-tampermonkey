@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.9 + LG13_META v3.0 JSON footer)
 // @namespace    lg13.local
-// @version      4.9
+// @version      5.0
 // @description  v4.8 + LG13_META v3.0: JSON code block format {"LG13_META":{...}} alongside legacy <<LG13_META>> key:value
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
@@ -384,28 +384,46 @@
     const apiCount  = messages.reduce((s, m) => s + (m.ts_source === 'api' ? 1 : 0), 0);
     const metaCount = messages.reduce((s, m) => s + (m.lg13_meta ? 1 : 0), 0);
 
-    GM_xmlhttpRequest({
-      method: 'POST',
-      url: LG13_URL,
-      headers: { 'Content-Type': 'application/json' },
-      data: payload,
-      timeout: 20000,
-      onload: (resp) => {
-        log('sent', messages.length, 'imgs:', imgCount, 'api-ts:', apiCount, 'meta:', metaCount);
-        let n = '';
-        try {
-          const d = JSON.parse(resp.responseText);
-          if (d && d.atoms_count != null) n = ' / ' + d.atoms_count + ' atoms';
-          else if (d && Array.isArray(d.atom_ids)) n = ' / ' + d.atom_ids.length + ' atoms';
-        } catch (_) {}
-        const tail = (imgCount  ? ' (' + imgCount + ' img)' : '') +
-                     (apiCount  ? ' [api:' + apiCount + ']' : '') +
-                     (metaCount ? ' [meta:' + metaCount + ']' : '');
-        showStatus(GLYPH_OK + ' ' + messages.length + ' msgs' + n + tail, '#4ade80');
-      },
-      onerror: (e) => { err('send failed', e); showStatus(GLYPH_WRN + ' err', '#f87171'); },
-      ontimeout: () => { err('send timeout'); showStatus(GLYPH_WRN + ' timeout', '#f87171'); }
-    });
+    function onSuccess(responseText) {
+      log('sent', messages.length, 'imgs:', imgCount, 'api-ts:', apiCount, 'meta:', metaCount);
+      let n = '';
+      try {
+        const d = JSON.parse(responseText);
+        if (d && d.atoms_count != null) n = ' / ' + d.atoms_count + ' atoms';
+        else if (d && Array.isArray(d.atom_ids)) n = ' / ' + d.atom_ids.length + ' atoms';
+      } catch (_) {}
+      const tail = (imgCount  ? ' (' + imgCount + ' img)' : '') +
+                   (apiCount  ? ' [api:' + apiCount + ']' : '') +
+                   (metaCount ? ' [meta:' + metaCount + ']' : '');
+      showStatus(GLYPH_OK + ' ' + messages.length + ' msgs' + n + tail, '#4ade80');
+    }
+
+    function sendViaFetch() {
+      fetch(LG13_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      }).then(r => r.text()).then(onSuccess).catch(e => {
+        err('fetch fallback failed', e);
+        showStatus(GLYPH_WRN + ' err(fetch)', '#f87171');
+      });
+    }
+
+    try {
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: LG13_URL,
+        headers: { 'Content-Type': 'application/json' },
+        data: payload,
+        timeout: 20000,
+        onload: (resp) => onSuccess(resp.responseText),
+        onerror: (e) => { err('GM err, trying fetch', e); sendViaFetch(); },
+        ontimeout: () => { err('GM timeout, trying fetch'); sendViaFetch(); }
+      });
+    } catch (e) {
+      err('GM_xmlhttpRequest threw, trying fetch', e);
+      sendViaFetch();
+    }
   }
 
   function isStreaming() {
