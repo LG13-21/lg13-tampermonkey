@@ -11,6 +11,8 @@
 // @connect      chatgpt.com
 // @connect      chat.openai.com
 // @run-at       document-idle
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_ingest.user_JSON_v4.7.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_ingest.user_JSON_v4.7.js
 // ==/UserScript==
 
 // CHANGES vs v4.8 (LG13 footer v3.0):

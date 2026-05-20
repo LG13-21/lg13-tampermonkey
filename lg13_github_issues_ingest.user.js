@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Issues -> LG13 Ingest
 // @namespace    lg13.local
-// @version      1.0
+// @version      1.1
 // @description  Ingests GitHub issue body + comments into LG13 atom pipeline on page load / new comment
 // @author       Tom / LG13 / coder
 // @match        https://github.com/*/*/issues/*
@@ -47,7 +47,7 @@
   // Extract all comments from DOM
   function getComments() {
     const items = [];
-    document.querySelectorAll('.timeline-comment, .js-comment').forEach(el => {
+    document.querySelectorAll('.timeline-comment, .js-comment, [id^="issuecomment-"]').forEach(el => {
       const authorEl = el.querySelector('.author, [data-hovercard-type="user"]');
       const bodyEl   = el.querySelector('.comment-body, .markdown-body');
       const timeEl   = el.querySelector('relative-time, time');
@@ -215,14 +215,12 @@
     ingest(false);
     showBadge('ingested', true);
 
-    // Watch timeline for new comments
-    const timeline = document.querySelector('.js-discussion, .js-timeline-container, #discussion_bucket');
-    if (timeline) {
-      observer.observe(timeline, { childList: true, subtree: true });
-      log('Observer armed on timeline');
-    } else {
-      log('Timeline not found — observer not armed');
-    }
+    // Watch timeline for new comments — try modern selectors first, fall back to broader container
+    const timeline = document.querySelector(
+      '#comments, [data-target="issue-layout.mainContent"], .js-discussion, .js-timeline-container, #discussion_bucket, main'
+    ) || document.body;
+    observer.observe(timeline, { childList: true, subtree: true });
+    log('Observer armed on:', timeline.id || timeline.className || timeline.tagName);
   }, 2000);
 
   log('GitHub Issues Ingest v1.0 loaded');

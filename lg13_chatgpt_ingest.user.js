@@ -11,8 +11,8 @@
 // @connect      chatgpt.com
 // @connect      chat.openai.com
 // @run-at       document-idle
-// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_ingest.user.js
-// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/coder/anti-spam-2026-05-09/lg13_chatgpt_ingest.user.js
+// @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_ingest.user.js
+// @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_ingest.user.js
 // ==/UserScript==
 
 // CHANGES vs v4.4:
