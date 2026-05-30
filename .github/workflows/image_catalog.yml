@@ -1,0 +1,55 @@
+name: Image Catalog
+
+on:
+  push:
+    paths:
+      - '**.png'
+      - '**.jpg'
+      - '**.jpeg'
+      - '**.gif'
+      - '**.webp'
+      - '**.tiff'
+      - 'scripts/image_catalog.py'
+  workflow_dispatch:
+    inputs:
+      write_csv:
+        description: 'Generovat CSV výstup'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pillow
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-ces 2>/dev/null || true
+          pip install pytesseract || true
+
+      - name: Run image catalog
+        run: |
+          ARGS="--repo-root . --output artifacts"
+          if [ "${{ github.event.inputs.write_csv }}" = "true" ]; then
+            ARGS="$ARGS --csv"
+          fi
+          python scripts/image_catalog.py $ARGS
+
+      - name: Commit catalog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add artifacts/image_catalog.json artifacts/image_catalog.csv 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: update image catalog [skip ci]"
+          git push
