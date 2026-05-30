@@ -1,0 +1,177 @@
+name: Issue → MySQL
+
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created]
+
+jobs:
+  store:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'lg13-store')) ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/store'))
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Parse issue + store to MySQL
+        env:
+          LG13_API_URL: https://luky.ai-domy.cz/api/api.php
+          LG13_API_KEY: ${{ secrets.LG13_API_KEY }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body || github.event.comment.body }}
+          REPO: ${{ github.repository }}
+        run: |
+          python - <<'PYEOF'
+          import json, os, urllib.request
+
+          api_url = os.environ["LG13_API_URL"]
+          api_key = os.environ["LG13_API_KEY"]
+          issue_num = os.environ.get("ISSUE_NUMBER", "")
+          title = os.environ.get("ISSUE_TITLE", "")
+          body = os.environ.get("ISSUE_BODY", "")
+          repo = os.environ.get("REPO", "")
+
+          # Parse structured data from issue body
+          # Format: ```json\n{...}\n``` or free text
+          import re
+          data = {}
+          m = re.search(r'```json\s*(\{.*?\})\s*```', body, re.DOTALL)
+          if m:
+              try:
+                  data = json.loads(m.group(1))
+              except Exception:
+                  pass
+
+          if not data:
+              data = {"title": title, "body": body[:2000], "raw": True}
+
+          payload = {
+              "action": "store",
+              "api_key": api_key,
+              "table": "lg13_issues",
+              "data": {
+                  "instance": "github_actions",
+                  "category": "issue",
+                  "issue_number": issue_num,
+                  "repo": repo,
+                  **data
+              }
+          }
+
+          req = urllib.request.Request(
+              api_url,
+              data=json.dumps(payload).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST"
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=15) as r:
+                  result = json.loads(r.read())
+                  print(f"Store result: {result}")
+                  if result.get("ok"):
+                      print(f"::notice::Stored to MySQL id={result.get('id')}")
+                  else:
+                      print(f"::warning::Store failed: {result.get('error')}")
+          except Exception as e:
+              print(f"::error::API call failed: {e}")
+          PYEOF
+
+      - name: Comment result on issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = context.issue.number;
+            if (!issue_number) return;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+              body: '✅ **LG13**: Issue data uložena do MySQL. Workflow: [' + context.runId + '](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')'
+            });
+
+  gemini:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/gemini')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Call Gemini via PHP bridge + store
+        env:
+          LG13_API_URL: https://luky.ai-domy.cz/api/api.php
+          LG13_API_KEY: ${{ secrets.LG13_API_KEY }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          python - <<'PYEOF'
+          import json, os, urllib.request, re
+
+          api_url = os.environ["LG13_API_URL"]
+          api_key = os.environ["LG13_API_KEY"]
+          comment = os.environ.get("COMMENT_BODY", "")
+
+          # Extract prompt: /gemini <prompt>
+          m = re.match(r'^/gemini\s+(.*)', comment, re.DOTALL)
+          prompt = m.group(1).strip() if m else comment
+
+          payload = {
+              "action": "gemini",
+              "api_key": api_key,
+              "prompt": prompt,
+              "store": True,
+              "instance": "github_actions"
+          }
+
+          req = urllib.request.Request(
+              api_url,
+              data=json.dumps(payload).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST"
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  result = json.loads(r.read())
+                  if result.get("ok"):
+                      text = result.get("text", "")
+                      print(f"GEMINI_RESPONSE<<EOF\n{text}\nEOF")
+                      # Write to GitHub env for next step
+                      with open(os.environ.get("GITHUB_ENV",""), "a") as f:
+                          safe = text.replace('\n', '%0A').replace('\r', '')[:4000]
+                          f.write(f"GEMINI_RESPONSE={safe}\n")
+                  else:
+                      print(f"::error::Gemini failed: {result.get('error')}")
+          except Exception as e:
+              print(f"::error::API call failed: {e}")
+          PYEOF
+
+      - name: Post Gemini response to issue
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          GEMINI_RESPONSE: ${{ env.GEMINI_RESPONSE }}
+        with:
+          script: |
+            const response = process.env.GEMINI_RESPONSE || '(no response)';
+            const issue_number = context.issue.number;
+            if (!issue_number) return;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number,
+              body: `🤖 **Gemini:** ${response}`
+            });
