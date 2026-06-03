@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
 // @namespace    lg13.local
-// @version      5.2
-// @description  v4.4 base + parse <<LG13_META>> trailer (in HTML comment) + [[ATOM]] split markers per message [v5.1: github raw (repo public)]
+// @version      6.0
+// @description  v5.2 DOM-only: removed backend-api/conversation fetch (401 fix). Pure DOM extraction, timestamps from DOM/aria. LG13_META + ATOM split preserved.
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -39,10 +39,8 @@
   var GLYPH_HRG = String.fromCodePoint(0x23F3);
 
   const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
-  const API_BASE = location.origin + '/backend-api/conversation/';
   const DEBOUNCE_MS = 2000;
-  const SCHEMA_VERSION = 'lg13.v4.7';
-  const API_CACHE_TTL_MS = 60 * 1000;
+  const SCHEMA_VERSION = 'lg13.v6.dom';
 
   const log = (...a) => console.log('[LG13]', ...a);
   const err = (...a) => console.error('[LG13-ERR]', ...a);
@@ -147,58 +145,10 @@
     return out.length > 1 ? out : null;
   }
 
-  // ---- ChatGPT backend API fetch -------------------------------------------
-  const apiCache = new Map();
-
-  async function fetchConvMeta(convId) {
-    if (!convId || convId.startsWith('fallback_')) return null;
-    const cached = apiCache.get(convId);
-    if (cached && (Date.now() - cached.ts) < API_CACHE_TTL_MS) return cached.data;
-
-    try {
-      const resp = await fetch(API_BASE + convId, {
-        credentials: 'include',
-        headers: { 'Accept': 'application/json' },
-      });
-      if (!resp.ok) {
-        err('api', resp.status, convId);
-        return null;
-      }
-      const j = await resp.json();
-      const byMsg = {};
-      const mapping = j && j.mapping ? j.mapping : {};
-      for (const nodeId of Object.keys(mapping)) {
-        const node = mapping[nodeId];
-        const msg = node && node.message;
-        if (!msg) continue;
-        const ct = (typeof msg.create_time === 'number') ? msg.create_time : null;
-        const ut = (typeof msg.update_time === 'number') ? msg.update_time : null;
-        const md = msg.metadata || {};
-        byMsg[msg.id || nodeId] = {
-          ts: ct ? new Date(ct * 1000).toISOString() : null,
-          update_ts: ut ? new Date(ut * 1000).toISOString() : null,
-          model_slug: md.model_slug || msg.metadata && msg.metadata.default_model_slug || null,
-          parent: node.parent || null,
-          children: node.children || [],
-          role: msg.author && msg.author.role || null,
-        };
-      }
-      const data = {
-        meta: {
-          title: j.title || null,
-          create_time: j.create_time ? new Date(j.create_time * 1000).toISOString() : null,
-          update_time: j.update_time ? new Date(j.update_time * 1000).toISOString() : null,
-          model_slug: j.model_slug || null,
-          current_node: j.current_node || null,
-        },
-        byMsg,
-      };
-      apiCache.set(convId, { ts: Date.now(), data });
-      return data;
-    } catch (e) {
-      err('api fetch failed', e);
-      return null;
-    }
+  // ---- ChatGPT backend API fetch — DISABLED (returns 401 since 2026-05) -----
+  // Kept as stub so callers don't break; DOM timestamp fallback handles ts.
+  async function fetchConvMeta(_convId) {
+    return null;
   }
 
   // ---- DOM-based timestamps (fallback) -------------------------------------
@@ -450,7 +400,7 @@
 
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v4.7';
+    btn.textContent = GLYPH_HEX + ' LG13 v6.0';
     btn.addEventListener('click', async () => {
       const r = await extractConversation();
       send(r.messages, r.apiMeta, true);
@@ -466,7 +416,7 @@
     if (!shadow) return;
     const el = shadow.getElementById('status');
     if (!el) return;
-    el.textContent = GLYPH_HEX + ' LG13 v4.7 ' + msg;
+    el.textContent = GLYPH_HEX + ' LG13 v6.0 ' + msg;
     el.style.color = color || '#4ade80';
     el.style.borderColor = color || '#16a34a';
     el.style.opacity = '1';
@@ -506,7 +456,7 @@
       }
     }, 3000);
 
-    log('LG13 v4.7 running (api ts + images + meta + atoms)');
+    log('LG13 v6.0 running (dom-only: images + meta + atoms, no backend-api)');
   }
 
   init();
