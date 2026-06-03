@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.1
-// @description  v6.1 DOM-only ingest. Build: 2026-06-04. No backend-api (401 fix). Direct wake signal to pl_server + instances.
+// @version      6.2
+// @description  v6.2 DOM-only ingest. Build: 2026-06-04. Diff status (+N new msgs). Direct wake signal to instances.
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -325,12 +325,18 @@
     function onSuccess(respText) {
       log('sent', messages.length, 'imgs:', imgCount, 'api-ts:', apiCount, 'meta:', metaCount);
       let n = '';
+      let diffStr = '';
       try {
         const d = JSON.parse(respText);
         if (d && d.atoms_count != null) n = ' / ' + d.atoms_count + ' atoms';
         else if (d && Array.isArray(d.atom_ids)) n = ' / ' + d.atom_ids.length + ' atoms';
+        if (d && d.new_messages != null) {
+          if (d.new_messages === 0) diffStr = ' (+0 new)';
+          else diffStr = ' (+' + d.new_messages + ' new)';
+        }
+        if (d && d.new_atoms != null && d.new_atoms > 0) n = ' / +' + d.new_atoms + ' atoms';
       } catch (_) {}
-      showStatus(GLYPH_OK + ' ' + messages.length + ' msgs' + n + tail, '#4ade80');
+      showStatus(GLYPH_OK + ' ' + messages.length + ' msgs' + diffStr + n + tail, '#4ade80');
     }
 
     function sendViaFetch() {
@@ -400,7 +406,7 @@
 
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v6.1';
+    btn.textContent = GLYPH_HEX + ' LG13 v6.2';
     btn.addEventListener('click', async () => {
       const r = await extractConversation();
       send(r.messages, r.apiMeta, true);
@@ -416,7 +422,7 @@
     if (!shadow) return;
     const el = shadow.getElementById('status');
     if (!el) return;
-    el.textContent = GLYPH_HEX + ' LG13 v6.1 ' + msg;
+    el.textContent = GLYPH_HEX + ' LG13 v6.2 ' + msg;
     el.style.color = color || '#4ade80';
     el.style.borderColor = color || '#16a34a';
     el.style.opacity = '1';
@@ -456,7 +462,7 @@
       }
     }, 3000);
 
-    log('LG13 v6.1 running (dom-only: images + meta + atoms, no backend-api)');
+    log('LG13 v6.2 running (dom-only: images + meta + atoms, no backend-api)');
   }
 
   init();
