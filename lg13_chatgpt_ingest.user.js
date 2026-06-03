@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ChatGPT -> LG13 Ingest (v4.7 + LG13_META trailer + ATOM split)
+// @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.0
-// @description  v5.2 DOM-only: removed backend-api/conversation fetch (401 fix). Pure DOM extraction, timestamps from DOM/aria. LG13_META + ATOM split preserved.
+// @version      6.1
+// @description  v6.1 DOM-only ingest. Build: 2026-06-04. No backend-api (401 fix). Direct wake signal to pl_server + instances.
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -400,7 +400,7 @@
 
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v6.0';
+    btn.textContent = GLYPH_HEX + ' LG13 v6.1';
     btn.addEventListener('click', async () => {
       const r = await extractConversation();
       send(r.messages, r.apiMeta, true);
@@ -416,7 +416,7 @@
     if (!shadow) return;
     const el = shadow.getElementById('status');
     if (!el) return;
-    el.textContent = GLYPH_HEX + ' LG13 v6.0 ' + msg;
+    el.textContent = GLYPH_HEX + ' LG13 v6.1 ' + msg;
     el.style.color = color || '#4ade80';
     el.style.borderColor = color || '#16a34a';
     el.style.opacity = '1';
@@ -456,7 +456,7 @@
       }
     }, 3000);
 
-    log('LG13 v6.0 running (dom-only: images + meta + atoms, no backend-api)');
+    log('LG13 v6.1 running (dom-only: images + meta + atoms, no backend-api)');
   }
 
   init();
