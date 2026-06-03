@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.2
-// @description  v6.2 DOM-only ingest. Build: 2026-06-04. Diff status (+N new msgs). Direct wake signal to instances.
+// @version      6.3
+// @description  v6.3 DOM-only ingest. Build: 2026-06-04. Persistent grey status bar. Diff status (+N new / dup). Direct wake signal.
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -325,18 +325,22 @@
     function onSuccess(respText) {
       log('sent', messages.length, 'imgs:', imgCount, 'api-ts:', apiCount, 'meta:', metaCount);
       let n = '';
-      let diffStr = '';
+      let diffStr = ' (+? new)';
+      let color = '#4ade80';
       try {
         const d = JSON.parse(respText);
-        if (d && d.atoms_count != null) n = ' / ' + d.atoms_count + ' atoms';
-        else if (d && Array.isArray(d.atom_ids)) n = ' / ' + d.atom_ids.length + ' atoms';
-        if (d && d.new_messages != null) {
-          if (d.new_messages === 0) diffStr = ' (+0 new)';
-          else diffStr = ' (+' + d.new_messages + ' new)';
+        if (d && d.skipped === 'fingerprint_match') {
+          diffStr = ' (+0 new, dup)';
+          color = '#888';
+        } else if (d && d.skipped === 'no_new_msgs') {
+          diffStr = ' (+0 new)';
+          color = '#aaa';
+        } else if (d && d.new_messages != null) {
+          diffStr = d.new_messages === 0 ? ' (+0 new)' : ' (+' + d.new_messages + ' new)';
+          if (d.new_atoms != null && d.new_atoms > 0) n = ' / +' + d.new_atoms + ' atoms';
         }
-        if (d && d.new_atoms != null && d.new_atoms > 0) n = ' / +' + d.new_atoms + ' atoms';
       } catch (_) {}
-      showStatus(GLYPH_OK + ' ' + messages.length + ' msgs' + diffStr + n + tail, '#4ade80');
+      showStatus(GLYPH_OK + ' ' + messages.length + ' msgs' + diffStr + n + tail, color);
     }
 
     function sendViaFetch() {
@@ -396,17 +400,17 @@
       '       user-select: none; }',
       '#btn:hover { background: #0d1f3c; border-color: #4b8ef5; }',
       '#status { position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;',
-      '          padding: 5px 10px; border-radius: 6px; font-size: 11px;',
+      '          padding: 4px 10px; border-radius: 6px; font-size: 10px;',
       '          font-family: monospace; font-weight: 600;',
-      '          background: #052e16; border: 1px solid #16a34a; color: #4ade80;',
-      '          pointer-events: none; opacity: 0; transition: opacity 0.3s;',
+      '          background: #1a1a1a; border: 1px solid #444; color: #888;',
+      '          pointer-events: none; opacity: 1; transition: opacity 0.5s;',
       '          white-space: nowrap; }'
     ].join('\n');
     shadow.appendChild(style);
 
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v6.2';
+    btn.textContent = GLYPH_HEX + ' LG13 v6.3';
     btn.addEventListener('click', async () => {
       const r = await extractConversation();
       send(r.messages, r.apiMeta, true);
@@ -422,12 +426,17 @@
     if (!shadow) return;
     const el = shadow.getElementById('status');
     if (!el) return;
-    el.textContent = GLYPH_HEX + ' LG13 v6.2 ' + msg;
+    el.textContent = GLYPH_HEX + ' LG13 v6.3 ' + msg;
     el.style.color = color || '#4ade80';
     el.style.borderColor = color || '#16a34a';
     el.style.opacity = '1';
     clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => { el.style.opacity = '0'; }, 4000);
+    // Zustane viditelny — po 8s ztlumi na "idle grey" (neopacity 0)
+    statusTimer = setTimeout(() => {
+      el.style.color = '#555';
+      el.style.borderColor = '#333';
+      el.style.background = '#111';
+    }, 8000);
   }
 
   // ---- auto-snapshot -------------------------------------------------------
@@ -462,7 +471,7 @@
       }
     }, 3000);
 
-    log('LG13 v6.2 running (dom-only: images + meta + atoms, no backend-api)');
+    log('LG13 v6.3 running (dom-only: images + meta + atoms, no backend-api)');
   }
 
   init();
