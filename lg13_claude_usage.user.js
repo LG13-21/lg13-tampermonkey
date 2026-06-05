@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         LG13 Claude Usage Monitor
 // @namespace    lg13.local
-// @version      3.6
-// @description  Parse Claude usage page (session/weekly %, resets, plan, extra usage EUR) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.4: extra usage EUR parsing (extra_spent_eur/extra_limit_eur/extra_balance_eur); v3.3: fix field mapping; v3.2: Chrome allowed; v3.1: Edge support; v3.0: container-first parser]
-// @match        https://claude.ai/settings/usage*
+// @version      3.7
+// @description  Parse Claude usage page (session/weekly %, resets, plan, extra usage EUR) → POST localhost:8790/pl/usage/ingest. Auto page-reload. (#2687) [v3.7: fix @match — claude.ai moved usage to /new#settings/usage SPA route; v3.4: extra usage EUR; v3.3: fix fields; v3.2: Chrome; v3.0: container-first]
+// @match        https://claude.ai/*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @run-at       document-idle
@@ -20,6 +20,11 @@
 
   if (window.__LG13_USAGE__) return;
   window.__LG13_USAGE__ = true;
+
+  // v3.7: @match is now claude.ai/* — check at runtime we're on the usage page.
+  function onUsagePage() {
+    return location.href.includes('settings/usage') || location.hash.includes('settings/usage');
+  }
 
   const INGEST     = 'http://127.0.0.1:8790/pl/usage/ingest';
   const POLL_MS        = 2 * 60 * 1000; // re-parse + POST
@@ -351,16 +356,27 @@
     postUsage(payload, (status) => renderOverlay(payload, status));
   }
 
-  const observer = new MutationObserver(() => {
-    if (document.querySelector('[role="progressbar"], [class*="progress"], [class*="Progress"]')) {
-      observer.disconnect();
-      setTimeout(() => run(false), 1000);
-    }
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+  // SPA navigation: re-arm when navigating to usage page
+  function armIfOnUsagePage() {
+    if (!onUsagePage()) return;
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[role="progressbar"], [class*="progress"], [class*="Progress"]')) {
+        observer.disconnect();
+        setTimeout(() => run(false), 1000);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => run(false), 2500);
+  }
 
-  setInterval(() => run(false), POLL_MS);
-  setTimeout(() => run(false), 2500);
+  window.addEventListener('hashchange', () => setTimeout(armIfOnUsagePage, 500));
+  const _origPush = history.pushState;
+  history.pushState = function (...args) { _origPush.apply(this, args); setTimeout(armIfOnUsagePage, 500); };
+  const _origRepl = history.replaceState;
+  history.replaceState = function (...args) { _origRepl.apply(this, args); setTimeout(armIfOnUsagePage, 500); };
+
+  setInterval(() => { if (onUsagePage()) run(false); }, POLL_MS);
+  armIfOnUsagePage();
 
   // Hard reload — claude.ai refetches usage on full page load.
   // 1min if extra usage active or 5h/week >= 80%, else 3min.
