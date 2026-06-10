@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.3
-// @description  v6.3 DOM-only ingest. Build: 2026-06-04. Persistent grey status bar. Diff status (+N new / dup). Direct wake signal.
+// @version      6.4
+// @description  v6.4 Fix loop send: extractImages now works on clone, never mutates live DOM.
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -248,8 +248,9 @@
     turns.forEach(el => {
       const role = el.getAttribute('data-message-author-role');
       const msgId = el.getAttribute('data-message-id') || null;
-      const images = extractImages(el);
-      const rawText = extractText(el);
+      const elClone = el.cloneNode(true);
+      const images = extractImages(elClone);
+      const rawText = extractText(elClone);
       if ((!rawText || rawText.length < 5) && images.length === 0) return;
 
       // v4.7: parse trailer + atoms BEFORE stripping
@@ -399,7 +400,7 @@
       '       box-shadow: 0 2px 8px rgba(0,0,0,.6); pointer-events: auto;',
       '       user-select: none; }',
       '#btn:hover { background: #0d1f3c; border-color: #4b8ef5; }',
-      '#status { position: fixed; bottom: 16px; right: 16px; z-index: 2147483647;',
+      '#status { position: fixed; bottom: 80px; right: 16px; z-index: 2147483647;',
       '          padding: 4px 10px; border-radius: 6px; font-size: 10px;',
       '          font-family: monospace; font-weight: 600;',
       '          background: #1a1a1a; border: 1px solid #444; color: #888;',
@@ -410,7 +411,7 @@
 
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v6.3';
+    btn.textContent = GLYPH_HEX + ' LG13 v6.4';
     btn.addEventListener('click', async () => {
       const r = await extractConversation();
       send(r.messages, r.apiMeta, true);
@@ -426,7 +427,7 @@
     if (!shadow) return;
     const el = shadow.getElementById('status');
     if (!el) return;
-    el.textContent = GLYPH_HEX + ' LG13 v6.3 ' + msg;
+    el.textContent = GLYPH_HEX + ' LG13 v6.4 ' + msg;
     el.style.color = color || '#4ade80';
     el.style.borderColor = color || '#16a34a';
     el.style.opacity = '1';
@@ -471,7 +472,7 @@
       }
     }, 3000);
 
-    log('LG13 v6.3 running (dom-only: images + meta + atoms, no backend-api)');
+    log('LG13 v6.4 running (dom-only: images + meta + atoms, no backend-api)');
   }
 
   init();
