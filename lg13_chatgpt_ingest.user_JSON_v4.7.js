@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         ChatGPT -> LG13 Ingest (v4.9 + LG13_META v3.0 JSON footer)
+// @name         ChatGPT -> LG13 Ingest (v5.1 + LG13_META v3.0 JSON footer)
 // @namespace    lg13.local
-// @version      5.0
+// @version      5.1
 // @description  v4.8 + LG13_META v3.0: JSON code block format {"LG13_META":{...}} alongside legacy <<LG13_META>> key:value
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
@@ -163,6 +163,15 @@
     return out.length > 1 ? out : null;
   }
 
+  // ---- API content text extractor (no length limit) -----------------------
+  function _apiContentText(content) {
+    if (!content) return null;
+    const parts = content.parts;
+    if (!Array.isArray(parts)) return null;
+    const text = parts.filter(p => typeof p === 'string').join('\n').trim();
+    return text || null;
+  }
+
   // ---- ChatGPT backend API fetch -------------------------------------------
   const apiCache = new Map();
 
@@ -197,6 +206,7 @@
           parent: node.parent || null,
           children: node.children || [],
           role: msg.author && msg.author.role || null,
+          content_text: _apiContentText(msg.content),
         };
       }
       const data = {
@@ -315,7 +325,11 @@
       const role = el.getAttribute('data-message-author-role');
       const msgId = el.getAttribute('data-message-id') || null;
       const images = extractImages(el);
-      const rawText = extractText(el);
+      const domText = extractText(el);
+      // v4.8: prefer API content_text when longer (fixes ChatGPT DOM truncation of long messages)
+      const apiHitEarly = byMsg && msgId ? byMsg[msgId] : null;
+      const apiContent = apiHitEarly && apiHitEarly.content_text ? apiHitEarly.content_text : null;
+      const rawText = (apiContent && apiContent.length > domText.length) ? apiContent : domText;
       if ((!rawText || rawText.length < 5) && images.length === 0) return;
 
       // v4.7: parse trailer + atoms BEFORE stripping
@@ -327,7 +341,7 @@
       const id = hashStr(role + '|' + cleanText + '|' + imageTokens);
 
       let ts, ts_source, model_slug = null, parent = null, update_ts = null;
-      const apiHit = byMsg && msgId ? byMsg[msgId] : null;
+      const apiHit = apiHitEarly;
       if (apiHit && apiHit.ts) {
         ts = apiHit.ts;
         ts_source = 'api';
