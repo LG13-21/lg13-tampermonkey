@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.4
-// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.4: github raw (repo public)]
+// @version      1.5
+// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
@@ -104,6 +104,46 @@
 
     if (cmd.type === 'ping') {
       return 'pong';
+    }
+
+    if (cmd.type === 'read_conv') {
+      if (cmd.url && !location.href.includes(cmd.url)) {
+        openChat(cmd.url);
+        return 'nav';
+      }
+      await sleep(cmd.wait_ms || 4000);
+      const conv_id_m = location.pathname.match(/\/c\/([a-f0-9-]+)/i);
+      const conv_id = conv_id_m ? conv_id_m[1] : 'unknown';
+      const messages = Array.from(document.querySelectorAll('[data-message-author-role]')).map((el, idx) => {
+        const role = el.getAttribute('data-message-author-role');
+        const msgId = el.getAttribute('data-message-id') || null;
+        const clone = el.cloneNode(true);
+        clone.querySelectorAll('button,svg,img').forEach(n => n.remove());
+        clone.querySelectorAll('br').forEach(b => b.replaceWith(document.createTextNode('\n')));
+        const text = (clone.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+        if (text.length < 5) return null;
+        let h = 0; for (const c of (role + '|' + text)) h = ((31 * h) + c.charCodeAt(0)) >>> 0;
+        return {role: role === 'user' ? 'user' : 'assistant', text, idx, msg_id: msgId,
+                id: h.toString(16), ts: new Date().toISOString(), ts_source: 'tm_read_conv'};
+      }).filter(Boolean);
+      if (!messages.length) return 'no_messages';
+      let fpH = 0; for (const m of messages) for (const c of m.id) fpH = ((31 * fpH) + c.charCodeAt(0)) >>> 0;
+      const payload = JSON.stringify({
+        meta: {schema: 'lg13.v4.7', conv_id, title: document.title,
+               url: location.href, captured_at: new Date().toISOString(),
+               fingerprint: fpH.toString(16), source: 'tm_read_conv'},
+        messages
+      });
+      return await new Promise(resolve => {
+        GM_xmlhttpRequest({
+          method: 'POST', url: 'http://127.0.0.1:8790/pl/chatgpt/ingest',
+          headers: {'Content-Type': 'application/json'}, data: payload,
+          timeout: 10000,
+          onload: r => resolve('ok_' + messages.length + 'msgs'),
+          onerror: e => resolve('ingest_err'),
+          ontimeout: () => resolve('ingest_timeout'),
+        });
+      });
     }
 
     return 'unknown';
