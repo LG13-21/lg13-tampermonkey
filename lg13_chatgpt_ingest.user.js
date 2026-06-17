@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.5
-// @description  v6.5: recording guard (getUserMedia intercept), beforeunload, autosave localStorage, diag log
+// @version      6.6
+// @description  v6.6: resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -43,6 +43,7 @@
   const SCHEMA_VERSION = 'lg13.v6.dom';
   const AUTOSAVE_KEY = 'lg13_recording_autosave';
   const DIAG_LOG_KEY = 'lg13_diag_log';
+  const PANEL_WIDTH_KEY = 'lg13_panel_width';
 
   const log = (...a) => console.log('[LG13]', ...a);
   const err = (...a) => console.error('[LG13-ERR]', ...a);
@@ -417,67 +418,205 @@
     } catch (_) {}
   }
 
-  // ---- shadow-DOM toast UI -------------------------------------------------
+  // ---- shadow-DOM sidebar UI -----------------------------------------------
   let shadow = null;
   let statusTimer = null;
+  let _panelOpen = false;
+
   function buildUI() {
     if (shadow) return;
     const host = document.createElement('div');
     host.id = 'lg13-shadow-host';
     Object.assign(host.style, {
-      position: 'fixed', bottom: '0', right: '0', width: '0', height: '0',
+      position: 'fixed', top: '0', right: '0', width: '0', height: '0',
       zIndex: '2147483647', pointerEvents: 'none', overflow: 'visible'
     });
     document.body.appendChild(host);
     shadow = host.attachShadow({ mode: 'open' });
 
+    const savedW = Math.max(200, parseInt(localStorage.getItem(PANEL_WIDTH_KEY) || '320', 10));
+
     const style = document.createElement('style');
-    style.textContent = [
-      ':host { all: initial; }',
-      '#btn { position: fixed; bottom: 160px; right: 16px; z-index: 2147483647;',
-      '       background: #07101e; border: 1px solid #1e3358; color: #4b8ef5;',
-      '       padding: 5px 10px; border-radius: 6px; font-size: 11px;',
-      '       cursor: pointer; font-family: monospace; font-weight: 600;',
-      '       box-shadow: 0 2px 8px rgba(0,0,0,.6); pointer-events: auto;',
-      '       user-select: none; }',
-      '#btn:hover { background: #0d1f3c; border-color: #4b8ef5; }',
-      '#status { position: fixed; bottom: 80px; right: 16px; z-index: 2147483647;',
-      '          padding: 4px 10px; border-radius: 6px; font-size: 10px;',
-      '          font-family: monospace; font-weight: 600;',
-      '          background: #1a1a1a; border: 1px solid #444; color: #888;',
-      '          pointer-events: none; opacity: 1; transition: opacity 0.5s;',
-      '          white-space: nowrap; }'
-    ].join('\n');
+    style.textContent = `
+      :host { all: initial; }
+      #btn { position: fixed; bottom: 160px; right: 16px; z-index: 2147483647;
+             background: #07101e; border: 1px solid #1e3358; color: #4b8ef5;
+             padding: 5px 10px; border-radius: 6px; font-size: 11px;
+             cursor: pointer; font-family: monospace; font-weight: 600;
+             box-shadow: 0 2px 8px rgba(0,0,0,.6); pointer-events: auto;
+             user-select: none; }
+      #btn:hover { background: #0d1f3c; border-color: #4b8ef5; }
+      #status { position: fixed; bottom: 80px; right: 16px; z-index: 2147483647;
+                padding: 4px 10px; border-radius: 6px; font-size: 10px;
+                font-family: monospace; font-weight: 600;
+                background: #1a1a1a; border: 1px solid #444; color: #888;
+                pointer-events: none; opacity: 1; transition: opacity 0.5s;
+                white-space: nowrap; }
+      #panel { position: fixed; top: 0; right: 0; height: 100vh;
+               background: #07101e; border-left: 2px solid #1e3358;
+               z-index: 2147483646; display: none; flex-direction: column;
+               pointer-events: auto; min-width: 200px; max-width: 90vw;
+               box-shadow: -6px 0 24px rgba(0,0,0,.6); }
+      #panel.open { display: flex; }
+      #panel-header { display: flex; align-items: center; padding: 7px 10px;
+                      border-bottom: 1px solid #1e3358; background: #0a1628;
+                      flex-shrink: 0; gap: 8px; }
+      #panel-title { color: #4b8ef5; font-family: monospace; font-size: 12px;
+                     font-weight: 700; flex: 1; user-select: none; }
+      #panel-btns { display: flex; gap: 4px; }
+      .ph-btn { background: none; border: 1px solid #1e3358; color: #4b8ef5;
+                padding: 2px 8px; border-radius: 4px; font-size: 11px;
+                cursor: pointer; font-family: monospace; }
+      .ph-btn:hover { background: #0d1f3c; border-color: #4b8ef5; }
+      #panel-log { flex: 1; overflow-y: auto; padding: 6px 8px;
+                   font-family: monospace; font-size: 10px; color: #555;
+                   line-height: 1.5; }
+      #panel-log .le { padding: 1px 0; border-bottom: 1px solid #0d1628; }
+      #panel-status { padding: 5px 10px; border-top: 1px solid #1e3358;
+                      background: #0a1628; font-family: monospace; font-size: 10px;
+                      color: #888; flex-shrink: 0; min-height: 22px; }
+      #rh { position: absolute; left: 0; top: 0; width: 6px; height: 100%;
+            cursor: col-resize; z-index: 1; }
+      #rh:hover, #rh.active { background: rgba(75,142,245,0.25); }
+    `;
     shadow.appendChild(style);
 
+    // Floating toggle button (visible when panel closed)
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v6.4';
-    btn.addEventListener('click', async () => {
+    btn.textContent = GLYPH_HEX + ' LG13 v6.6';
+    btn.addEventListener('click', () => togglePanel());
+    shadow.appendChild(btn);
+
+    // Status toast (visible when panel closed)
+    const statusEl = document.createElement('div');
+    statusEl.id = 'status';
+    shadow.appendChild(statusEl);
+
+    // ----- Sidebar panel -----
+    const panel = document.createElement('div');
+    panel.id = 'panel';
+    panel.style.width = savedW + 'px';
+
+    // Resize handle (drag left edge to resize)
+    const rh = document.createElement('div');
+    rh.id = 'rh';
+    let isDragging = false, dragX0 = 0, dragW0 = 0;
+    rh.addEventListener('mousedown', e => {
+      isDragging = true; dragX0 = e.clientX; dragW0 = panel.offsetWidth;
+      rh.classList.add('active'); e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      const w = Math.max(200, Math.min(Math.round(window.innerWidth * 0.92), dragW0 + (dragX0 - e.clientX)));
+      panel.style.width = w + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false; rh.classList.remove('active');
+      localStorage.setItem(PANEL_WIDTH_KEY, String(panel.offsetWidth));
+    });
+    panel.appendChild(rh);
+
+    // Header
+    const header = document.createElement('div');
+    header.id = 'panel-header';
+
+    const title = document.createElement('span');
+    title.id = 'panel-title';
+    title.textContent = GLYPH_HEX + ' LG13 v6.6';
+    header.appendChild(title);
+
+    const panelBtns = document.createElement('div');
+    panelBtns.id = 'panel-btns';
+
+    // Full-column toggle (⛶ / ⊠)
+    let isFullCol = false;
+    const fullBtn = document.createElement('button');
+    fullBtn.className = 'ph-btn';
+    fullBtn.textContent = '⛶'; // ⛶
+    fullBtn.title = 'Celý sloupec / zmenšit';
+    fullBtn.addEventListener('click', () => {
+      isFullCol = !isFullCol;
+      if (isFullCol) {
+        panel.dataset.prevW = panel.style.width;
+        panel.style.width = '100vw';
+        fullBtn.textContent = '⊠'; // ⊠
+      } else {
+        panel.style.width = panel.dataset.prevW || (savedW + 'px');
+        fullBtn.textContent = '⛶';
+      }
+    });
+    panelBtns.appendChild(fullBtn);
+
+    // Manual send
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'ph-btn';
+    sendBtn.textContent = '↑ send';
+    sendBtn.addEventListener('click', async () => {
       const r = await extractConversation();
       send(r.messages, r.apiMeta, true);
     });
-    shadow.appendChild(btn);
+    panelBtns.appendChild(sendBtn);
 
-    const status = document.createElement('div');
-    status.id = 'status';
-    shadow.appendChild(status);
+    // Close
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'ph-btn';
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', () => togglePanel(false));
+    panelBtns.appendChild(closeBtn);
+
+    header.appendChild(panelBtns);
+    panel.appendChild(header);
+
+    // Log body
+    const logEl = document.createElement('div');
+    logEl.id = 'panel-log';
+    panel.appendChild(logEl);
+
+    // Status bar
+    const panelStatus = document.createElement('div');
+    panelStatus.id = 'panel-status';
+    panel.appendChild(panelStatus);
+
+    shadow.appendChild(panel);
+
+    function togglePanel(force) {
+      _panelOpen = (force !== undefined) ? !!force : !_panelOpen;
+      panel.classList.toggle('open', _panelOpen);
+      btn.style.display = _panelOpen ? 'none' : '';
+      statusEl.style.display = _panelOpen ? 'none' : '';
+    }
+    shadow._togglePanel = togglePanel;
+
+    shadow._addLog = (msg, color) => {
+      const e = document.createElement('div');
+      e.className = 'le';
+      e.style.color = color || '#555';
+      e.textContent = new Date().toLocaleTimeString('cs') + ' ' + msg;
+      logEl.appendChild(e);
+      while (logEl.childElementCount > 100) logEl.removeChild(logEl.firstChild);
+      logEl.scrollTop = logEl.scrollHeight;
+    };
   }
 
   function showStatus(msg, color) {
     if (!shadow) return;
+    const fullMsg = GLYPH_HEX + ' LG13 v6.6 ' + msg;
+    const c = color || '#4ade80';
+    const bc = color || '#16a34a';
     const el = shadow.getElementById('status');
-    if (!el) return;
-    el.textContent = GLYPH_HEX + ' LG13 v6.4 ' + msg;
-    el.style.color = color || '#4ade80';
-    el.style.borderColor = color || '#16a34a';
-    el.style.opacity = '1';
+    if (el) {
+      el.textContent = fullMsg; el.style.color = c;
+      el.style.borderColor = bc; el.style.opacity = '1';
+    }
+    const ps = shadow.getElementById('panel-status');
+    if (ps) { ps.textContent = fullMsg; ps.style.color = c; }
+    if (shadow._addLog) shadow._addLog(msg, c);
     clearTimeout(statusTimer);
-    // Zustane viditelny — po 8s ztlumi na "idle grey" (neopacity 0)
     statusTimer = setTimeout(() => {
-      el.style.color = '#555';
-      el.style.borderColor = '#333';
-      el.style.background = '#111';
+      if (el) { el.style.color = '#555'; el.style.borderColor = '#333'; el.style.background = '#111'; }
+      if (ps) ps.style.color = '#555';
     }, 8000);
   }
 
