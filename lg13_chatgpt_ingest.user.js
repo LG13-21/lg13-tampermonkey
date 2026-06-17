@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.4
-// @description  v6.4 Fix loop send: extractImages now works on clone, never mutates live DOM.
+// @version      6.5
+// @description  v6.5: recording guard (getUserMedia intercept), beforeunload, autosave localStorage, diag log
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -41,6 +41,8 @@
   const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
   const DEBOUNCE_MS = 2000;
   const SCHEMA_VERSION = 'lg13.v6.dom';
+  const AUTOSAVE_KEY = 'lg13_recording_autosave';
+  const DIAG_LOG_KEY = 'lg13_diag_log';
 
   const log = (...a) => console.log('[LG13]', ...a);
   const err = (...a) => console.error('[LG13-ERR]', ...a);
@@ -376,6 +378,45 @@
     return !!document.querySelector('[data-testid="stop-button"]');
   }
 
+  // ---- voice recording guard -----------------------------------------------
+  function isRecording() { return !!window.__LG13_RECORDING__; }
+
+  let _buHandler = null;
+  function armBeforeUnload() {
+    if (_buHandler) return;
+    _buHandler = e => {
+      e.preventDefault();
+      e.returnValue = 'LG13: Probíhá nahrávání! Opuštění stránky smaže nahrávku.';
+      return e.returnValue;
+    };
+    window.addEventListener('beforeunload', _buHandler);
+  }
+  function disarmBeforeUnload() {
+    if (!_buHandler) return;
+    window.removeEventListener('beforeunload', _buHandler);
+    _buHandler = null;
+  }
+
+  function autosave(messages, apiMeta) {
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
+        ts: new Date().toISOString(), conv_id: getConvId(),
+        url: location.href, messages: messages || [], api: apiMeta || null
+      }));
+    } catch (e) { err('autosave failed', e); }
+  }
+
+  function diagLog(action, detail) {
+    try {
+      const prev = JSON.parse(localStorage.getItem(DIAG_LOG_KEY) || '[]');
+      prev.push({ ts: new Date().toISOString(), action, detail,
+        recording: isRecording(),
+        stack: new Error().stack.split('\n').slice(1, 4).join(' | ') });
+      if (prev.length > 50) prev.splice(0, prev.length - 50);
+      localStorage.setItem(DIAG_LOG_KEY, JSON.stringify(prev));
+    } catch (_) {}
+  }
+
   // ---- shadow-DOM toast UI -------------------------------------------------
   let shadow = null;
   let statusTimer = null;
@@ -446,17 +487,42 @@
 
   async function onChange() {
     if (isStreaming()) return;
+    if (isRecording()) { log('onChange blocked — recording active'); return; }
     const r = await extractConversation();
     if (!r.messages.length) return;
     const fp = getFingerprint(r.messages);
     if (fp === lastFingerprint) return;
     lastFingerprint = fp;
+    autosave(r.messages, r.apiMeta);
     send(r.messages, r.apiMeta, false);
   }
 
   function init() {
     buildUI();
     showStatus('pripojen', '#4ade80');
+
+    // getUserMedia intercept — detect voice recording start/end
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const _origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = async function(constraints) {
+          const stream = await _origGUM(constraints);
+          if (constraints && constraints.audio) {
+            window.__LG13_RECORDING__ = true;
+            diagLog('recording_start', JSON.stringify(constraints));
+            armBeforeUnload();
+            stream.getTracks().forEach(track => {
+              track.addEventListener('ended', () => {
+                window.__LG13_RECORDING__ = false;
+                diagLog('recording_end', 'track ended');
+                disarmBeforeUnload();
+              });
+            });
+          }
+          return stream;
+        };
+      } catch (e) { err('getUserMedia intercept failed', e); }
+    }
 
     const obs = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -466,13 +532,14 @@
 
     setInterval(() => {
       if (!document.getElementById('lg13-shadow-host')) {
+        if (isRecording()) return;
         shadow = null;
         buildUI();
         showStatus('obnoveno', '#4ade80');
       }
     }, 3000);
 
-    log('LG13 v6.4 running (dom-only: images + meta + atoms, no backend-api)');
+    log('LG13 v6.5 running (recording guard + autosave + diag)');
   }
 
   init();
