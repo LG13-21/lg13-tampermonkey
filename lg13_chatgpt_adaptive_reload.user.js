@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT Adaptive Reload
 // @namespace    local.chatgpt
-// @version      1.6
-// @description  Adaptive page reload — Edge only, reload jen v idle, MIN 5 min [v1.6: Edge-only guard (nespouštět v FF/Chrome kde Tom pracuje)]
+// @version      1.7
+// @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.7: reload jen po 15 min kompletního idle (scroll/mouse/click reset timer)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
@@ -10,12 +10,17 @@
 // @downloadURL  https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_adaptive_reload.user.js
 // ==/UserScript==
 
+// PATCH v1.7 (coder, 2026-06-27):
+//   ACTIVITY_THRESHOLD zvýšen na 15 min. Reload nastane jen pokud user byl
+//   kompletně idle (žádný scroll/mouse/click/keydown) po dobu 15 minut.
+//   Čtení konverzace = scrollování = aktivita → no reload.
+
+// PATCH v1.6 (coder, 2026-06-27):
+//   Přidán activity tracker (scroll, mousemove, click, keydown).
+//   Fix pro případ čtení: scroll = aktivita → no reload.
+
 // PATCH v1.5 (coder, 2026-05-11):
-//   isTyping() teď vrací true POUZE pokud composer obsahuje text. ChatGPT
-//   defaultně dává focus na input box (i prázdný) → v1.4 isTyping = true →
-//   reload se navždy přeskakoval. Tom nahlásil "nedela refresh". Fix: empty
-//   input box ≠ typing. Plus přidán FORCE_RELOAD_AFTER safety net (45 min)
-//   pro případ že tick někde zatuhne.
+//   isTyping() teď vrací true POUZE pokud composer obsahuje text.
 
 // PATCH v1.2 (coder, 2026-05-11):
 //   3 fixes: ACTIVITY no-reload, no HARD_STOP, MIN 5min.
@@ -26,17 +31,26 @@
 (function () {
 'use strict';
 
-// Edge-only guard — nespouštět v Firefox ani Chrome kde Tom pracuje
-if (!/Edg\//.test(navigator.userAgent)) return;
-
 const MIN_INTERVAL       = 5 * 60 * 1000;     // 5 min
 const MAX_INTERVAL       = 60 * 60 * 1000;    // 1 h
 const STEP               = 60 * 1000;         // +1 min per idle tick
-const FORCE_RELOAD_AFTER = 45 * 60 * 1000;    // hard safety: reload po 45 min bez ohledu
+const FORCE_RELOAD_AFTER = 90 * 60 * 1000;    // hard safety: reload po 90 min
+const ACTIVITY_THRESHOLD = 15 * 60 * 1000;    // 15 min — reload jen po 15 min kompletního idle
 
 let currentInterval = MIN_INTERVAL;
 let lastMessageCount = 0;
 let pageLoadedAt = Date.now();
+let lastActivity = Date.now();
+
+// Sledování aktivity uživatele
+function trackActivity() {
+    lastActivity = Date.now();
+}
+document.addEventListener('scroll',    trackActivity, { passive: true, capture: true });
+document.addEventListener('mousemove', trackActivity, { passive: true });
+document.addEventListener('click',     trackActivity, { passive: true });
+document.addEventListener('keydown',   trackActivity, { passive: true });
+document.addEventListener('touchstart',trackActivity, { passive: true });
 
 function getMessageCount() {
     return document.querySelectorAll('[data-message-author-role]').length;
@@ -53,8 +67,6 @@ function isTyping() {
                      el.tagName === 'INPUT' ||
                      el.isContentEditable);
     if (!isInput) return false;
-    // Empty composer != typing. ChatGPT default-focuses the composer even
-    // when Tom isn't writing; without this we'd never reload.
     const val = (el.value !== undefined)
         ? el.value
         : (el.innerText || el.textContent || '');
@@ -62,21 +74,31 @@ function isTyping() {
 }
 
 function tick() {
-    const sinceLoad = Date.now() - pageLoadedAt;
+    const now = Date.now();
+    const sinceLoad = now - pageLoadedAt;
+    const idleSince = now - lastActivity;
 
     if (isGenerating()) {
-        console.log('[AdaptiveReload] generating, skip (age ' + Math.round(sinceLoad/1000) + 's)');
+        console.log('[AdaptiveReload] generating, skip');
         scheduleNext();
         return;
     }
 
     if (isTyping()) {
-        console.log('[AdaptiveReload] composer has draft, skip (age ' + Math.round(sinceLoad/1000) + 's)');
+        console.log('[AdaptiveReload] composer has draft, skip');
         scheduleNext();
         return;
     }
 
-    // Hard safety net: po 45 min od load reload bez ohledu na count delta.
+    // Uživatel byl aktivní v posledních 2 minutách → přeskoč reload
+    if (idleSince < ACTIVITY_THRESHOLD) {
+        console.log('[AdaptiveReload] user active ' + Math.round(idleSince/1000) + 's ago, skip');
+        currentInterval = MIN_INTERVAL; // reset intervalu — byl aktivní
+        scheduleNext();
+        return;
+    }
+
+    // Hard safety net po 90 min
     if (sinceLoad >= FORCE_RELOAD_AFTER) {
         console.log('[AdaptiveReload] FORCE reload — page age ' + Math.round(sinceLoad/60000) + 'min');
         location.reload();
@@ -85,7 +107,7 @@ function tick() {
 
     const count = getMessageCount();
     if (count > lastMessageCount) {
-        console.log('[AdaptiveReload] activity (' + lastMessageCount + ' -> ' + count + '), no reload');
+        console.log('[AdaptiveReload] new messages (' + lastMessageCount + ' -> ' + count + '), no reload');
         lastMessageCount = count;
         currentInterval = MIN_INTERVAL;
         scheduleNext();
@@ -102,7 +124,7 @@ function scheduleNext() {
 }
 
 lastMessageCount = getMessageCount();
-console.log('[AdaptiveReload v1.5] started — MIN=5min, MAX=60min, FORCE=45min, baseline=' + lastMessageCount);
+console.log('[AdaptiveReload v1.7] started — MIN=5min, MAX=60min, FORCE=90min, ACTIVITY_THRESHOLD=15min, baseline=' + lastMessageCount);
 scheduleNext();
 
 })();
