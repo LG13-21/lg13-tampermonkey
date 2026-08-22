@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.6
-// @description  v6.6: resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
+// @version      6.7
+// @description  v6.7: auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -299,6 +299,20 @@
 
   function getFingerprint(messages) {
     return hashStr(messages.map(m => m.id).join('|'));
+  }
+
+  // Detects whether newMessages is prevIds plus new items appended at the tail.
+  // A false result means the DOM's message window changed by prepend or reorder
+  // (scroll-up lazy-load revealing older messages, virtualization sliding the
+  // rendered window) rather than a genuinely new message arriving — the caller
+  // should skip auto-send in that case, since prevIds were already sent.
+  function isAppendOnly(newMessages, prevIds) {
+    if (!prevIds.length) return true;
+    if (newMessages.length < prevIds.length) return false;
+    for (let i = 0; i < prevIds.length; i++) {
+      if (newMessages[i].id !== prevIds[i]) return false;
+    }
+    return true;
   }
 
   // ---- send + toast --------------------------------------------------------
@@ -623,6 +637,7 @@
   // ---- auto-snapshot -------------------------------------------------------
   let debounceTimer = null;
   let lastFingerprint = '';
+  let lastSentIds = [];
 
   async function onChange() {
     if (isStreaming()) return;
@@ -631,8 +646,16 @@
     if (!r.messages.length) return;
     const fp = getFingerprint(r.messages);
     if (fp === lastFingerprint) return;
-    lastFingerprint = fp;
     autosave(r.messages, r.apiMeta);
+    if (!isAppendOnly(r.messages, lastSentIds)) {
+      // scroll-up / lazy-load changed the visible DOM window without a new
+      // message actually arriving — autosave above still captured it locally,
+      // but skip the network send so already-sent messages aren't re-posted.
+      log('onChange: non-append DOM change (scroll/lazy-load) — send skipped');
+      return;
+    }
+    lastFingerprint = fp;
+    lastSentIds = r.messages.map(m => m.id);
     send(r.messages, r.apiMeta, false);
   }
 
