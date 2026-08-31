@@ -52,6 +52,7 @@ Pokud TM nefunguje nebo potřebuješ prohledat historii offline:
 - **`cgpt_find.py`** — Playwright CDP scraper, search form + snippety: `python L:/LG13/app/agent/skills/cgpt_find.py "query" --json`
 - **`git-tmonkey-search` skill** — full-text přes ingestovaná vlákna v git historii (offline)
 - **`rag-search` skill** — RAG přes lokální embedding databázi (4 měsíce historie TXT)
+- **[`cge-search` skill](skills/cge-search/SKILL.md)** / [`scripts/cge_search.py`](scripts/cge_search.py) — fulltextové hledání přímo v exportovaných JSON souborech (`ChatGPT_export/*.json`) a atom daily store, bez browseru/CDP
 
 ## Přispívání
 
