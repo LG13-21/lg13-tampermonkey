@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.7
-// @description  v6.7: auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
+// @version      6.8
+// @description  v6.8: floating button + status toast are draggable, position persisted (localStorage) — no longer fixed over ChatGPT's own composer controls; v6.7 auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -44,6 +44,7 @@
   const AUTOSAVE_KEY = 'lg13_recording_autosave';
   const DIAG_LOG_KEY = 'lg13_diag_log';
   const PANEL_WIDTH_KEY = 'lg13_panel_width';
+  const BTN_POS_KEY = 'lg13_btn_pos';
 
   const log = (...a) => console.log('[LG13]', ...a);
   const err = (...a) => console.error('[LG13-ERR]', ...a);
@@ -495,17 +496,71 @@
     `;
     shadow.appendChild(style);
 
-    // Floating toggle button (visible when panel closed)
+    // Floating toggle button (visible when panel closed) — draggable, position persisted
     const btn = document.createElement('button');
     btn.id = 'btn';
     btn.textContent = GLYPH_HEX + ' LG13 v6.6';
-    btn.addEventListener('click', () => togglePanel());
     shadow.appendChild(btn);
 
-    // Status toast (visible when panel closed)
+    // Status toast (visible when panel closed) — always sits 80px below the button
     const statusEl = document.createElement('div');
     statusEl.id = 'status';
     shadow.appendChild(statusEl);
+
+    function loadBtnPos() {
+      try {
+        const raw = localStorage.getItem(BTN_POS_KEY);
+        if (raw) {
+          const p = JSON.parse(raw);
+          if (Number.isFinite(p.right) && Number.isFinite(p.bottom)) return p;
+        }
+      } catch (_) {}
+      return { right: 16, bottom: 160 };
+    }
+
+    function applyBtnPos(pos) {
+      btn.style.right = pos.right + 'px';
+      btn.style.bottom = pos.bottom + 'px';
+      statusEl.style.right = pos.right + 'px';
+      statusEl.style.bottom = Math.max(0, pos.bottom - 80) + 'px';
+    }
+
+    let btnPos = loadBtnPos();
+    applyBtnPos(btnPos);
+
+    // Drag anywhere on screen to reposition; a plain click (no movement) still toggles the panel
+    let btnDrag = null;
+    let btnDidDrag = false;
+    btn.addEventListener('mousedown', e => {
+      btnDrag = { x0: e.clientX, y0: e.clientY, right0: btnPos.right, bottom0: btnPos.bottom };
+      btnDidDrag = false;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!btnDrag) return;
+      const dx = e.clientX - btnDrag.x0;
+      const dy = e.clientY - btnDrag.y0;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) btnDidDrag = true;
+      if (!btnDidDrag) return;
+      const maxRight = Math.max(0, window.innerWidth - 40);
+      const maxBottom = Math.max(0, window.innerHeight - 30);
+      btnPos = {
+        right: Math.min(maxRight, Math.max(0, btnDrag.right0 - dx)),
+        bottom: Math.min(maxBottom, Math.max(0, btnDrag.bottom0 - dy))
+      };
+      applyBtnPos(btnPos);
+    });
+    document.addEventListener('mouseup', () => {
+      if (!btnDrag) return;
+      btnDrag = null;
+      if (btnDidDrag) {
+        try { localStorage.setItem(BTN_POS_KEY, JSON.stringify(btnPos)); } catch (_) {}
+      }
+    });
+    btn.addEventListener('click', () => {
+      if (btnDidDrag) { btnDidDrag = false; return; }
+      togglePanel();
+    });
 
     // ----- Sidebar panel -----
     const panel = document.createElement('div');
