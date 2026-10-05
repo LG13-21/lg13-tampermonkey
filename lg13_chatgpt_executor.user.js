@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.7
+// @version      1.8
 // @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -229,7 +229,7 @@
     const sendBtn = document.querySelector('button[data-testid="send-button"]')
                  || document.querySelector('button[aria-label*="end" i][type="submit"]');
     const input = getInput();
-    if (input && sendBtn && !sendBtn.disabled) {
+    if (input && (!sendBtn || !sendBtn.disabled || !(input.value || input.textContent || '').trim())) {
       return 'idle';
     }
     // busy: transitional (just submitted, not yet streaming) or input not ready
