@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Adaptive Reload
 // @namespace    local.chatgpt
-// @version      1.7
+// @version      1.8
 // @description  Adaptive page reload — reload jen v idle, no hard-stop, MIN 5 min [v1.7: reload jen po 15 min kompletního idle (scroll/mouse/click reset timer)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -52,8 +52,34 @@ document.addEventListener('click',     trackActivity, { passive: true });
 document.addEventListener('keydown',   trackActivity, { passive: true });
 document.addEventListener('touchstart',trackActivity, { passive: true });
 
+  // <lg13-turns>
+  // ChatGPT zmenil DOM: stary [data-message-author-role] (div s data-message-id) vs novy
+  // virtualizovany [data-chatgpt-search-unit-key="<turn>:<n>:user|assistant"] s id zpravy
+  // v data-chatgpt-search-message-ids. Stary ma prednost; zadny z nich = prazdny seznam.
+  function lg13GetTurns(root) {
+    root = root || document;
+    const old = root.querySelectorAll('[data-message-author-role]');
+    if (old.length) {
+      return Array.from(old).map(el => ({
+        el: el, role: el.getAttribute('data-message-author-role'), msgId: el.getAttribute('data-message-id') || null
+      }));
+    }
+    const out = [];
+    root.querySelectorAll('[data-chatgpt-search-unit-key]').forEach(unit => {
+      const m = /:(user|assistant)$/.exec(unit.getAttribute('data-chatgpt-search-unit-key') || '');
+      if (!m) return;
+      const ids = (unit.getAttribute('data-chatgpt-search-message-ids') || '').split(/\s+/).filter(Boolean);
+      const body = m[1] === 'user'
+        ? unit.querySelector('[data-user-message-bubble]')
+        : unit.querySelector('[data-chatgpt-selection-message-id]');
+      out.push({ el: body || unit, role: m[1], msgId: ids[0] || null });
+    });
+    return out;
+  }
+  // </lg13-turns>
+
 function getMessageCount() {
-    return document.querySelectorAll('[data-message-author-role]').length;
+    return lg13GetTurns(document).length;
 }
 
 function isGenerating() {

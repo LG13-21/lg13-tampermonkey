@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.5
+// @version      1.6
 // @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -76,6 +76,32 @@
 
   // ---- command executor ----------------------------------------------------
 
+  // <lg13-turns>
+  // ChatGPT zmenil DOM: stary [data-message-author-role] (div s data-message-id) vs novy
+  // virtualizovany [data-chatgpt-search-unit-key="<turn>:<n>:user|assistant"] s id zpravy
+  // v data-chatgpt-search-message-ids. Stary ma prednost; zadny z nich = prazdny seznam.
+  function lg13GetTurns(root) {
+    root = root || document;
+    const old = root.querySelectorAll('[data-message-author-role]');
+    if (old.length) {
+      return Array.from(old).map(el => ({
+        el: el, role: el.getAttribute('data-message-author-role'), msgId: el.getAttribute('data-message-id') || null
+      }));
+    }
+    const out = [];
+    root.querySelectorAll('[data-chatgpt-search-unit-key]').forEach(unit => {
+      const m = /:(user|assistant)$/.exec(unit.getAttribute('data-chatgpt-search-unit-key') || '');
+      if (!m) return;
+      const ids = (unit.getAttribute('data-chatgpt-search-message-ids') || '').split(/\s+/).filter(Boolean);
+      const body = m[1] === 'user'
+        ? unit.querySelector('[data-user-message-bubble]')
+        : unit.querySelector('[data-chatgpt-selection-message-id]');
+      out.push({ el: body || unit, role: m[1], msgId: ids[0] || null });
+    });
+    return out;
+  }
+  // </lg13-turns>
+
   async function execute(cmd) {
     log('cmd', cmd);
 
@@ -114,9 +140,7 @@
       await sleep(cmd.wait_ms || 4000);
       const conv_id_m = location.pathname.match(/\/c\/([a-f0-9-]+)/i);
       const conv_id = conv_id_m ? conv_id_m[1] : 'unknown';
-      const messages = Array.from(document.querySelectorAll('[data-message-author-role]')).map((el, idx) => {
-        const role = el.getAttribute('data-message-author-role');
-        const msgId = el.getAttribute('data-message-id') || null;
+      const messages = lg13GetTurns(document).map(({ el, role, msgId }, idx) => {
         const clone = el.cloneNode(true);
         clone.querySelectorAll('button,svg,img').forEach(n => n.remove());
         clone.querySelectorAll('br').forEach(b => b.replaceWith(document.createTextNode('\n')));

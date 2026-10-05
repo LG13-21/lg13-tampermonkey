@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LG13 ChatGPT Full Conv Loader
 // @namespace    lg13.local
-// @version      1.5
+// @version      1.6
 // @description  Manual button — scroll to top, then slow PgDn-style scroll down to force-load entire long conv into DOM (so LG13 ingest sees all messages) [v1.5: version sync; běží ve všech browserech — manuální tlačítko, neinterferuje]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -42,8 +42,34 @@
   // ChatGPT main thread scrolls inside an inner div, NOT window.
   // Heuristic: deepest <main> descendant with overflow-y:auto/scroll AND
   // contains data-message-author-role nodes.
+  // <lg13-turns>
+  // ChatGPT zmenil DOM: stary [data-message-author-role] (div s data-message-id) vs novy
+  // virtualizovany [data-chatgpt-search-unit-key="<turn>:<n>:user|assistant"] s id zpravy
+  // v data-chatgpt-search-message-ids. Stary ma prednost; zadny z nich = prazdny seznam.
+  function lg13GetTurns(root) {
+    root = root || document;
+    const old = root.querySelectorAll('[data-message-author-role]');
+    if (old.length) {
+      return Array.from(old).map(el => ({
+        el: el, role: el.getAttribute('data-message-author-role'), msgId: el.getAttribute('data-message-id') || null
+      }));
+    }
+    const out = [];
+    root.querySelectorAll('[data-chatgpt-search-unit-key]').forEach(unit => {
+      const m = /:(user|assistant)$/.exec(unit.getAttribute('data-chatgpt-search-unit-key') || '');
+      if (!m) return;
+      const ids = (unit.getAttribute('data-chatgpt-search-message-ids') || '').split(/\s+/).filter(Boolean);
+      const body = m[1] === 'user'
+        ? unit.querySelector('[data-user-message-bubble]')
+        : unit.querySelector('[data-chatgpt-selection-message-id]');
+      out.push({ el: body || unit, role: m[1], msgId: ids[0] || null });
+    });
+    return out;
+  }
+  // </lg13-turns>
+
   function findScrollContainer() {
-    const turns = document.querySelectorAll('[data-message-author-role]');
+    const turns = lg13GetTurns(document).map(t => t.el);
     if (turns.length === 0) return document.scrollingElement;
 
     let el = turns[0].parentElement;

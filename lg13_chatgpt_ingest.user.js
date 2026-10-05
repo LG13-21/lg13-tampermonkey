@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.8
-// @description  v6.8: floating button + status toast are draggable, position persisted (localStorage) — no longer fixed over ChatGPT's own composer controls; v6.7 auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
+// @version      6.9
+// @description  v6.9: supports ChatGPT's new virtualized DOM (data-chatgpt-search-unit-key) besides data-message-author-role; append detection is tail-based and per-conversation (SPA thread switch no longer blocks sending); v6.8: floating button + status toast are draggable, position persisted (localStorage) — no longer fixed over ChatGPT's own composer controls; v6.7 auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -38,6 +38,7 @@
   var GLYPH_WRN = String.fromCodePoint(0x26A0);
   var GLYPH_HRG = String.fromCodePoint(0x23F3);
 
+  const SCRIPT_VERSION = '6.9';
   const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
   const DEBOUNCE_MS = 2000;
   const SCHEMA_VERSION = 'lg13.v6.dom';
@@ -239,8 +240,34 @@
       .trim();
   }
 
+  // <lg13-turns>
+  // ChatGPT zmenil DOM: stary [data-message-author-role] (div s data-message-id) vs novy
+  // virtualizovany [data-chatgpt-search-unit-key="<turn>:<n>:user|assistant"] s id zpravy
+  // v data-chatgpt-search-message-ids. Stary ma prednost; zadny z nich = prazdny seznam.
+  function lg13GetTurns(root) {
+    root = root || document;
+    const old = root.querySelectorAll('[data-message-author-role]');
+    if (old.length) {
+      return Array.from(old).map(el => ({
+        el: el, role: el.getAttribute('data-message-author-role'), msgId: el.getAttribute('data-message-id') || null
+      }));
+    }
+    const out = [];
+    root.querySelectorAll('[data-chatgpt-search-unit-key]').forEach(unit => {
+      const m = /:(user|assistant)$/.exec(unit.getAttribute('data-chatgpt-search-unit-key') || '');
+      if (!m) return;
+      const ids = (unit.getAttribute('data-chatgpt-search-message-ids') || '').split(/\s+/).filter(Boolean);
+      const body = m[1] === 'user'
+        ? unit.querySelector('[data-user-message-bubble]')
+        : unit.querySelector('[data-chatgpt-selection-message-id]');
+      out.push({ el: body || unit, role: m[1], msgId: ids[0] || null });
+    });
+    return out;
+  }
+  // </lg13-turns>
+
   async function extractConversation() {
-    const turns = document.querySelectorAll('[data-message-author-role]');
+    const turns = lg13GetTurns(document);
     if (!turns.length) return { messages: [], apiMeta: null };
     const convId = getConvId();
     const api = await fetchConvMeta(convId);
@@ -249,9 +276,7 @@
     const messages = [];
     let idx = 0;
 
-    turns.forEach(el => {
-      const role = el.getAttribute('data-message-author-role');
-      const msgId = el.getAttribute('data-message-id') || null;
+    turns.forEach(({ el, role, msgId }) => {
       const elClone = el.cloneNode(true);
       const images = extractImages(elClone);
       const rawText = extractText(elClone);
@@ -307,14 +332,19 @@
   // (scroll-up lazy-load revealing older messages, virtualization sliding the
   // rendered window) rather than a genuinely new message arriving — the caller
   // should skip auto-send in that case, since prevIds were already sent.
+  // <lg13-append-only>
+  // True = je co poslat: zadna historie, zadny prekryv s uz odeslanym (jine vlakno / posunute
+  // okno) nebo za poslednim znamym id pribyla nova zprava. False = jen prepend starsich zprav
+  // (scroll-up / lazy-load) nebo nic noveho.
   function isAppendOnly(newMessages, prevIds) {
     if (!prevIds.length) return true;
-    if (newMessages.length < prevIds.length) return false;
-    for (let i = 0; i < prevIds.length; i++) {
-      if (newMessages[i].id !== prevIds[i]) return false;
-    }
-    return true;
+    const known = new Set(prevIds);
+    let lastKnown = -1;
+    for (let i = 0; i < newMessages.length; i++) if (known.has(newMessages[i].id)) lastKnown = i;
+    if (lastKnown === -1) return true;
+    return lastKnown < newMessages.length - 1;
   }
+  // </lg13-append-only>
 
   // ---- send + toast --------------------------------------------------------
   function send(messages, apiMeta, manual) {
@@ -499,7 +529,7 @@
     // Floating toggle button (visible when panel closed) — draggable, position persisted
     const btn = document.createElement('button');
     btn.id = 'btn';
-    btn.textContent = GLYPH_HEX + ' LG13 v6.6';
+    btn.textContent = GLYPH_HEX + ' LG13 v' + SCRIPT_VERSION;
     shadow.appendChild(btn);
 
     // Status toast (visible when panel closed) — always sits 80px below the button
@@ -593,7 +623,7 @@
 
     const title = document.createElement('span');
     title.id = 'panel-title';
-    title.textContent = GLYPH_HEX + ' LG13 v6.6';
+    title.textContent = GLYPH_HEX + ' LG13 v' + SCRIPT_VERSION;
     header.appendChild(title);
 
     const panelBtns = document.createElement('div');
@@ -671,7 +701,7 @@
 
   function showStatus(msg, color) {
     if (!shadow) return;
-    const fullMsg = GLYPH_HEX + ' LG13 v6.6 ' + msg;
+    const fullMsg = GLYPH_HEX + ' LG13 v' + SCRIPT_VERSION + ' ' + msg;
     const c = color || '#4ade80';
     const bc = color || '#16a34a';
     const el = shadow.getElementById('status');
@@ -693,12 +723,15 @@
   let debounceTimer = null;
   let lastFingerprint = '';
   let lastSentIds = [];
+  let lastConvId = '';
 
   async function onChange() {
     if (isStreaming()) return;
     if (isRecording()) { log('onChange blocked — recording active'); return; }
     const r = await extractConversation();
     if (!r.messages.length) return;
+    const cid = getConvId();
+    if (cid !== lastConvId) { lastConvId = cid; lastSentIds = []; lastFingerprint = ''; }
     const fp = getFingerprint(r.messages);
     if (fp === lastFingerprint) return;
     autosave(r.messages, r.apiMeta);
@@ -746,6 +779,12 @@
       debounceTimer = setTimeout(() => { onChange().catch(err); }, DEBOUNCE_MS);
     });
     obs.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => { onChange().catch(err); }, 500);
+      }
+    });
 
     setInterval(() => {
       if (!document.getElementById('lg13-shadow-host')) {
@@ -756,7 +795,7 @@
       }
     }, 3000);
 
-    log('LG13 v6.5 running (recording guard + autosave + diag)');
+    log('LG13 v' + SCRIPT_VERSION + ' running (recording guard + autosave + diag)');
   }
 
   init();
