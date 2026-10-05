@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.9
-// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)] [v1.9: per-thread ON/OFF badge]
+// @version      1.10
+// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)] [v1.9: per-thread ON/OFF badge] [v1.10: PL link indicator]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
@@ -177,7 +177,9 @@
 
   // ---- per-thread ON/OFF (default ON, stored in Tampermonkey storage) -------
 
-  const VERSION = '1.9';
+  const VERSION = '1.10';
+  let __plOkTs = 0;
+  const plOk = (resp) => { if (resp && resp.status >= 200 && resp.status < 300) __plOkTs = Date.now(); };
   const OFF_PREFIX = 'lg13_exec_off_';
 
   function isEnabled() {
@@ -205,7 +207,11 @@
     }
     let text, color;
     if (!tid) { text = '○ TM Executor ' + VERSION + ' · no thread'; color = '#444'; }
-    else if (isEnabled()) { text = '● TM Executor ' + VERSION + ' · ON'; color = '#16a34a'; }
+    else if (isEnabled()) {
+      const pl = Date.now() - __plOkTs < 6000;
+      text = '● TM Executor ' + VERSION + ' · ON · PL ' + (pl ? '✓' : '✗');
+      color = pl ? '#16a34a' : '#d97706';
+    }
     else { text = '● TM Executor ' + VERSION + ' · OFF'; color = '#dc2626'; }
     if (text !== __badgeText) {
       __badgeText = text;
@@ -228,6 +234,7 @@
       url: SERVER + '?thread_id=' + encodeURIComponent(getThreadId() || 'none'),
       timeout: 5000,
       onload: async (resp) => {
+        plOk(resp);
         let cmds = [];
         try {
           cmds = JSON.parse(resp.responseText);
@@ -301,7 +308,8 @@
         status: status,
         ts: new Date().toISOString()
       }),
-      timeout: 3000
+      timeout: 3000,
+      onload: plOk
     });
     if (__lastHeartbeat.tid !== tid || __lastHeartbeat.status !== status) {
       log('state', tid, status);
