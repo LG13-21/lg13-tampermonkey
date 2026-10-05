@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.6
+// @version      1.7
 // @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -55,18 +55,18 @@
     document.execCommand('insertText', false, text);
 
     setTimeout(() => {
-      el.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter',
-        bubbles: true
-      }));
-    }, 100);
+      const btn = document.querySelector('button[data-testid="send-button"]')
+               || document.querySelector('button[aria-label*="end" i][type="submit"]');
+      if (btn && !btn.disabled) { btn.click(); return; }
+      el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true}));
+    }, 400);
 
     return true;
   }
 
   async function openChat(url) {
     if (location.href.includes(url)) return true;
-    location.href = 'https://chat.openai.com' + url;
+    location.href = url.startsWith('http') ? url : location.origin + url;
     return false; // reload přijde
   }
 
@@ -178,7 +178,7 @@
   function poll() {
     GM_xmlhttpRequest({
       method: 'GET',
-      url: SERVER,
+      url: SERVER + '?thread_id=' + encodeURIComponent(getThreadId() || 'none'),
       timeout: 5000,
       onload: async (resp) => {
         let cmds = [];
