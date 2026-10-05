@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.8
-// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)]
+// @version      1.9
+// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)] [v1.9: per-thread ON/OFF badge]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      127.0.0.1
 // @run-at       document-idle
 // @updateURL    https://raw.githubusercontent.com/LG13-21/lg13-tampermonkey/main/lg13_chatgpt_executor.user.js
@@ -173,9 +175,54 @@
     return 'unknown';
   }
 
+  // ---- per-thread ON/OFF (default ON, stored in Tampermonkey storage) -------
+
+  const VERSION = '1.9';
+  const OFF_PREFIX = 'lg13_exec_off_';
+
+  function isEnabled() {
+    const tid = getThreadId();
+    return !tid || !GM_getValue(OFF_PREFIX + tid, false);
+  }
+
+  let __badge = null;
+  let __badgeText = '';
+
+  function renderBadge() {
+    const tid = getThreadId();
+    if (!__badge) {
+      __badge = document.createElement('div');
+      __badge.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483646;'
+        + 'font:11px/1 system-ui,sans-serif;padding:4px 8px;border-radius:10px;'
+        + 'background:#111;color:#ddd;border:1px solid #444;cursor:pointer;user-select:none;opacity:.85';
+      __badge.addEventListener('click', () => {
+        const t = getThreadId();
+        if (!t) return;
+        GM_setValue(OFF_PREFIX + t, isEnabled());
+        renderBadge();
+      });
+      document.body.appendChild(__badge);
+    }
+    let text, color;
+    if (!tid) { text = '○ TM Executor ' + VERSION + ' · no thread'; color = '#444'; }
+    else if (isEnabled()) { text = '● TM Executor ' + VERSION + ' · ON'; color = '#16a34a'; }
+    else { text = '● TM Executor ' + VERSION + ' · OFF'; color = '#dc2626'; }
+    if (text !== __badgeText) {
+      __badgeText = text;
+      __badge.textContent = text;
+      __badge.style.borderColor = color;
+      __badge.style.color = color === '#444' ? '#ddd' : color;
+      __badge.title = 'Klik: zapnout/vypnout executor pro toto vlákno';
+    }
+  }
+
+  setInterval(renderBadge, 1000);
+  renderBadge();
+
   // ---- polling -------------------------------------------------------------
 
   function poll() {
+    if (!isEnabled()) return;
     GM_xmlhttpRequest({
       method: 'GET',
       url: SERVER + '?thread_id=' + encodeURIComponent(getThreadId() || 'none'),
@@ -241,6 +288,7 @@
   function heartbeat() {
     const tid = getThreadId();
     if (!tid) return; // /c/<id> only — new-conv root skipped
+    if (!isEnabled()) return;
     const status = detectState();
     // Coalesce: same tid+status → still send (server overwrites ts).
     // No deduplication here; PL is cheap and gives PL freshest ts.
