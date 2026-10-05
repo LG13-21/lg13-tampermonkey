@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.9
-// @description  v6.9: supports ChatGPT's new virtualized DOM (data-chatgpt-search-unit-key) besides data-message-author-role; append detection is tail-based and per-conversation (SPA thread switch no longer blocks sending); v6.8: floating button + status toast are draggable, position persisted (localStorage) — no longer fixed over ChatGPT's own composer controls; v6.7 auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
+// @version      6.10
+// @description  v6.10: onChange re-polls while streaming (browser-sent messages were dropped when no mutation followed stream end) + diag log for skipped sends; v6.9: supports ChatGPT's new virtualized DOM (data-chatgpt-search-unit-key) besides data-message-author-role; append detection is tail-based and per-conversation (SPA thread switch no longer blocks sending); v6.8: floating button + status toast are draggable, position persisted (localStorage) — no longer fixed over ChatGPT's own composer controls; v6.7 auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -726,7 +726,12 @@
   let lastConvId = '';
 
   async function onChange() {
-    if (isStreaming()) return;
+    if (isStreaming()) {
+      // no later mutation is guaranteed once the stream ends — poll until idle
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => { onChange().catch(err); }, DEBOUNCE_MS);
+      return;
+    }
     if (isRecording()) { log('onChange blocked — recording active'); return; }
     const r = await extractConversation();
     if (!r.messages.length) return;
@@ -740,6 +745,7 @@
       // message actually arriving — autosave above still captured it locally,
       // but skip the network send so already-sent messages aren't re-posted.
       log('onChange: non-append DOM change (scroll/lazy-load) — send skipped');
+      diagLog('send_skipped_non_append', 'msgs=' + r.messages.length + ' prev=' + lastSentIds.length);
       return;
     }
     lastFingerprint = fp;
