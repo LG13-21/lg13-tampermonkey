@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LG13 Executor (ChatGPT <- Server)
 // @namespace    lg13.local
-// @version      1.10
-// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)] [v1.9: per-thread ON/OFF badge] [v1.10: PL link indicator]
+// @version      1.11
+// @description  Obrácený ingest – příkazy + DOM state heartbeat (#2617 Phase 1) [v1.5: github raw (repo public)] [v1.9: per-thread ON/OFF badge] [v1.10: PL link indicator] [v1.11: attachments + upload_source]
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        GM_xmlhttpRequest
@@ -66,6 +66,100 @@
     return true;
   }
 
+  // ---- attachments (v1.11) ------------------------------------------------------
+  const FILE_URL = 'http://127.0.0.1:8790/pl/chatgpt/file?f=';
+
+  function fetchStaged(att) {
+    return new Promise(resolve => {
+      GM_xmlhttpRequest({
+        method: 'GET', url: FILE_URL + encodeURIComponent(att.file), responseType: 'arraybuffer', timeout: 30000,
+        onload: r => (r.status === 200 && r.response && r.response.byteLength)
+          ? resolve(new File([r.response], att.name, {type: att.mime || 'application/octet-stream'}))
+          : resolve(null),
+        onerror: () => resolve(null), ontimeout: () => resolve(null),
+      });
+    });
+  }
+
+  function fileInput() {
+    const all = document.querySelectorAll('input[type="file"]');
+    return all.length ? all[all.length - 1] : null;
+  }
+
+  function setFiles(input, files) {
+    const dt = new DataTransfer();
+    files.forEach(f => dt.items.add(f));
+    input.files = dt.files;
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+  }
+
+  function pasteFiles(target, files) {
+    const dt = new DataTransfer();
+    files.forEach(f => dt.items.add(f));
+    target.focus();
+    target.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+  }
+
+  // vrati 'ok' nebo 'attach_failed:<krok>' (zadny tichy uspech)
+  async function attachToComposer(attachments) {
+    const files = [];
+    for (const att of attachments) {
+      const f = await fetchStaged(att);
+      if (!f) return 'attach_failed:fetch_' + att.name;
+      files.push(f);
+    }
+    const input = await waitForInput();
+    if (!input) return 'attach_failed:no_composer';
+    const fi = fileInput();
+    if (fi) setFiles(fi, files); else pasteFiles(input, files);
+    // pocka na nahrani: nazev souboru v composeru a zadny progress; po 60 s chyba
+    const t0 = Date.now();
+    let seen = false;
+    while (Date.now() - t0 < 60000) {
+      await sleep(500);
+      const form = input.closest('form') || document;
+      const txt = form.textContent || '';
+      seen = files.every(f => txt.includes(f.name) || txt.includes(f.name.replace(/\.[^.]+$/, '')));
+      const busy = form.querySelector('[role="progressbar"], [data-testid*="uploading" i], .animate-spin');
+      if (seen && !busy && Date.now() - t0 > 1500) return 'ok';
+    }
+    return seen ? 'attach_failed:upload_timeout' : 'attach_failed:preview_not_shown';
+  }
+
+  async function uploadSource(cmd) {
+    if (cmd.url && !location.href.includes(String(cmd.url).replace(/^https?:\/\/[^/]+/, ''))) {
+      openChat(cmd.url);
+      return 'nav';
+    }
+    if (cmd.replace) return 'upload_failed:replace_unsupported';
+    const files = [];
+    for (const att of (cmd.files || [])) {
+      const f = await fetchStaged(att);
+      if (!f) return 'upload_failed:fetch_' + att.name;
+      files.push(f);
+    }
+    if (!files.length) return 'upload_failed:no_files';
+    let fi = fileInput();
+    if (!fi) {
+      const btn = Array.from(document.querySelectorAll('button,[role="button"],[role="tab"],a'))
+        .find(b => /add files|add file|přidat soubor|nahrát|upload/i.test((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '')));
+      if (!btn) return 'upload_failed:no_add_button';
+      btn.click();
+      for (let i = 0; i < 20 && !(fi = fileInput()); i++) await sleep(250);
+      if (!fi) return 'upload_failed:no_file_input';
+    }
+    setFiles(fi, files);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 90000) {
+      await sleep(1000);
+      const txt = document.body.textContent || '';
+      const busy = document.querySelector('[role="progressbar"], .animate-spin');
+      if (files.every(f => txt.includes(f.name)) && !busy && Date.now() - t0 > 2500) return 'ok';
+    }
+    return 'upload_failed:not_confirmed';
+  }
+
   async function openChat(url) {
     if (location.href.includes(url)) return true;
     location.href = url.startsWith('http') ? url : location.origin + url;
@@ -121,8 +215,18 @@
       const input = await waitForInput();
       if (!input) return 'no_input';
 
+      if (Array.isArray(cmd.attachments) && cmd.attachments.length) {
+        const ar = await attachToComposer(cmd.attachments);
+        if (ar !== 'ok') { log('attach failed', ar); return ar; }
+      }
       write(cmd.text || '');
       return 'ok';
+    }
+
+    if (cmd.type === 'upload_source') {
+      const ur = await uploadSource(cmd);
+      if (ur !== 'ok' && ur !== 'nav') log('upload failed', ur);
+      return ur;
     }
 
     if (cmd.type === 'refresh') {
@@ -177,7 +281,7 @@
 
   // ---- per-thread ON/OFF (default ON, stored in Tampermonkey storage) -------
 
-  const VERSION = '1.10';
+  const VERSION = '1.11';
   let __plOkTs = 0;
   const plOk = (resp) => { if (resp && resp.status >= 200 && resp.status < 300) __plOkTs = Date.now(); };
   const OFF_PREFIX = 'lg13_exec_off_';
