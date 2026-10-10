@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT -> LG13 Ingest
 // @namespace    lg13.local
-// @version      6.11
+// @version      6.12
 // @description  v6.11: code identical to v6.9 (rollback of v6.10, version bumped so TM auto-updates); v6.9: supports ChatGPT's new virtualized DOM (data-chatgpt-search-unit-key) besides data-message-author-role; append detection is tail-based and per-conversation (SPA thread switch no longer blocks sending); v6.8: floating button + status toast are draggable, position persisted (localStorage) — no longer fixed over ChatGPT's own composer controls; v6.7 auto-send gated to append-only DOM changes (no re-send on scroll-up/lazy-load); v6.6 resizable panel sidebar (drag + full-column mode, localStorage width); v6.5 recording guard
 // @author       Tom / LG13
 // @match        https://chatgpt.com/*
@@ -27,9 +27,19 @@
 //     it as content; hash uses stripped text for stable id
 //   - schema bumped to lg13.v4.7 (additive; server lg13.v4* dispatcher catches it)
 
+function assessIngestHealth(s) {
+  if (s.busy || s.pendingSince == null) return 'ok';
+  if (s.now - s.pendingSince < s.staleMs) return 'ok';
+  if (s.kicks < s.maxKicks) return 'kick';
+  return (s.now - s.lastReloadTs >= s.reloadCooldownMs) ? 'reload' : 'alarm';
+}
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { assessIngestHealth };
+
 (function () {
   'use strict';
 
+  if (typeof window === 'undefined') return;
   if (window.__LG13_RUNNING__) return;
   window.__LG13_RUNNING__ = true;
 
@@ -38,7 +48,7 @@
   var GLYPH_WRN = String.fromCodePoint(0x26A0);
   var GLYPH_HRG = String.fromCodePoint(0x23F3);
 
-  const SCRIPT_VERSION = '6.9';
+  const SCRIPT_VERSION = '6.12';
   const LG13_URL = 'http://127.0.0.1:8790/pl/chatgpt/ingest';
   const DEBOUNCE_MS = 2000;
   const SCHEMA_VERSION = 'lg13.v6.dom';
@@ -795,7 +805,52 @@
       }
     }, 3000);
 
-    log('LG13 v' + SCRIPT_VERSION + ' running (recording guard + autosave + diag)');
+    // stale-ingest watchdog (R400): DOM differs from last sent fingerprint for too long
+    const WD = { staleMs: 120000, maxKicks: 2, reloadCooldownMs: 600000, tickMs: 30000 };
+    let wdPendingSince = null, wdKicks = 0;
+    function wdHeartbeat() {
+      try {
+        GM_xmlhttpRequest({
+          method: 'POST', url: 'http://127.0.0.1:8790/pl/tm_alive',
+          headers: { 'Content-Type': 'application/json' },
+          data: JSON.stringify({
+            conv_id: getConvId(), tab_url: location.href, title: getConvTitle(),
+            schema: SCHEMA_VERSION, ts: new Date().toISOString(),
+            last_fingerprint: lastFingerprint, visibility: document.visibilityState,
+            sync_stale_s: wdPendingSince == null ? 0 : Math.round((Date.now() - wdPendingSince) / 1000),
+          }),
+        });
+      } catch (e) { err(e); }
+    }
+    setInterval(async () => {
+      try {
+        const r = await extractConversation();
+        if (!r.messages.length) { wdHeartbeat(); return; }
+        if (getFingerprint(r.messages) === lastFingerprint) { wdPendingSince = null; wdKicks = 0; wdHeartbeat(); return; }
+        const now = Date.now();
+        if (wdPendingSince == null) wdPendingSince = now;
+        wdHeartbeat();
+        const act = assessIngestHealth({
+          now, pendingSince: wdPendingSince, kicks: wdKicks,
+          lastReloadTs: Number(localStorage.getItem('lg13_wd_reload_ts') || 0),
+          staleMs: WD.staleMs, maxKicks: WD.maxKicks, reloadCooldownMs: WD.reloadCooldownMs,
+          busy: isStreaming() || isRecording(),
+        });
+        if (act === 'kick') {
+          wdKicks++;
+          showStatus('watchdog: sync stoji, retry ' + wdKicks, '#fbbf24');
+          await onChange();
+        } else if (act === 'reload') {
+          localStorage.setItem('lg13_wd_reload_ts', String(now));
+          showStatus('watchdog: reload stranky', '#f87171');
+          setTimeout(() => location.reload(), 1500);
+        } else if (act === 'alarm') {
+          showStatus('SYNC STOJI (reload cooldown)', '#f87171');
+        }
+      } catch (e) { err(e); }
+    }, WD.tickMs);
+
+    log('LG13 v' + SCRIPT_VERSION + ' running (recording guard + autosave + diag + watchdog)');
   }
 
   init();
